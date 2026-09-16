@@ -12,9 +12,13 @@ llm = [
 config = [
     "pydantic-settings>=2.0.0",
 ]
+logging = [
+    "structlog>=24.0.0",
+]
 dev = [
     "sebby[llm]",
     "sebby[config]",
+    "sebby[logging]",
     "pytest>=8.0.0",
     "ruff>=0.6.0",
     "mypy>=1.11.0",
@@ -37,6 +41,10 @@ select = ["E", "F", "W", "I", "UP", "B"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+[[tool.mypy.overrides]]
+module = "structlog.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
