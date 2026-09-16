@@ -15,11 +15,17 @@ config = [
 logging = [
     "structlog>=24.0.0",
 ]
+http = [
+    "fastapi>=0.115.0",
+]
 dev = [
     "sebby[llm]",
     "sebby[config]",
     "sebby[logging]",
+    "sebby[http]",
     "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.0",
     "ruff>=0.6.0",
     "mypy>=1.11.0",
 ]
@@ -44,3 +50,4 @@ strict = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
