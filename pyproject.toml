@@ -1,6 +1,6 @@
 [project]
 name = "sebby"
-version = "0.1.0"
+version = "0.2.0"
 description = "Shared Python utilities across sebby's projects: multi-provider LLM client with prompt caching, retry helpers, and more."
 requires-python = ">=3.11"
 dependencies = []

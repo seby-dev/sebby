@@ -6,7 +6,7 @@ reimplementing the same patterns in each one.
 
 ## Install
 
-    uv add git+https://github.com/seby-dev/sebby --tag v0.1.0
+    uv add git+https://github.com/seby-dev/sebby --tag v0.2.0
 
 Pin to a tag or commit; bump deliberately.
 

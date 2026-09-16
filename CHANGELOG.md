@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Add `sebby.judgement`: `make_client`/`record_usage` helpers wiring up
   TypeSafe's Python SDK with sebby's explicit-config convention and
