@@ -1,0 +1,6 @@
+.PHONY: pre-push
+pre-push:
+	uv run ruff check .
+	uv run ruff format --check .
+	uv run mypy src
+	uv run pytest
