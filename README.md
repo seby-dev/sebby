@@ -90,3 +90,11 @@ Some modules need extra dependencies, installed via `uv add 'sebby[extra-name]'`
             # pyproject.toml doesn't declare a "dev" extra — for example a
             # repo using PEP 735 dependency groups instead:
             # sync-args: "--group dev"
+
+## Claude Code plugin
+
+`plugin/` is a Claude Code plugin (`sebby-toolkit`) bundling hooks, a
+feature-development skill, and a settings.json template — see
+[`plugin/README.md`](plugin/README.md) for what's included and how to
+install it. `docs/claude-md-snippets.md` has copy-paste CLAUDE.md sections
+for the conventions the plugin's hooks assume.
