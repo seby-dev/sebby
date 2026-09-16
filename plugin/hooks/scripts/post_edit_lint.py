@@ -24,7 +24,12 @@ def main() -> None:
     proj_root = Path(os.environ.get("CLAUDE_PROJECT_DIR", "."))
     command = build_command(proj_root)
 
-    result = subprocess.run(command, capture_output=True, text=True, cwd=proj_root)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, cwd=proj_root)
+    except (FileNotFoundError, OSError) as exc:
+        message = f"Could not run lint command `{' '.join(command)}`: {exc}"
+        print(json.dumps({"systemMessage": message}))
+        return
 
     if result.returncode != 0 and result.stdout.strip():
         lines = result.stdout.strip().splitlines()

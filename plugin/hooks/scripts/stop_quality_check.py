@@ -18,7 +18,11 @@ DEFAULT_LINT_COMMAND = "ruff check --output-format=concise"
 
 
 def _run_and_collect(command: list[str], cwd: Path, label: str, issues: list[str]) -> None:
-    result = subprocess.run(command, capture_output=True, text=True, cwd=cwd)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, cwd=cwd)
+    except (FileNotFoundError, OSError) as exc:
+        issues.append(f"{label}: could not run `{' '.join(command)}` ({exc})")
+        return
     if result.returncode != 0 and result.stdout.strip():
         lines = result.stdout.strip().splitlines()
         preview = "\n".join(lines[:20])

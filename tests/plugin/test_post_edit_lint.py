@@ -40,3 +40,11 @@ def test_defaults_to_ruff_when_no_command_configured(tmp_path: Path) -> None:
     result = run_hook({}, tmp_path)
 
     assert result.returncode == 0
+
+
+def test_reports_message_when_lint_command_not_found(tmp_path: Path) -> None:
+    result = run_hook({"SEBBY_LINT_COMMAND": "definitely-not-a-real-binary-xyz"}, tmp_path)
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert "Could not run lint command" in payload["systemMessage"]

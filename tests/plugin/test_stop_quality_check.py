@@ -59,3 +59,11 @@ def test_skips_typecheck_when_not_configured(tmp_path: Path) -> None:
     )
 
     assert result.stdout.strip() == ""
+
+
+def test_blocks_with_message_when_lint_command_not_found(tmp_path: Path) -> None:
+    result = run_hook({"SEBBY_LINT_COMMAND": "definitely-not-a-real-binary-xyz"}, tmp_path)
+
+    payload = json.loads(result.stdout)
+    assert payload["decision"] == "block"
+    assert "could not run" in payload["reason"]
