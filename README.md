@@ -53,7 +53,7 @@ schema, respecting Anthropic's four-breakpoint-per-request cap.
 | `sebby.cli` | `run_main` — catch-print-exit-code convention for CLI entry points |
 | `sebby.config` | Environment-driven settings base class (`Settings`) and a singleton accessor (`get_settings`) |
 | `sebby.logging` | structlog-to-stdlib logging setup with secret scrubbing and optional Sentry |
-| `sebby.http` | FastAPI helpers: shared-secret auth, localhost CORS, upload-size limits, threadpool file writes, bounded async job store |
+| `sebby.http` | FastAPI helpers: shared-secret auth, localhost CORS, upload-size limits, threadpool file writes, bounded async job store (`JobStore.create()` is thread-safe via an internal lock, but not process-shared; register `add_content_length_limit` before `add_localhost_cors` so a 413 response still carries CORS headers) |
 | `sebby.notify` | Telegram alert sending with MarkdownV2 escaping (no extra needed — the HTTP client is injected by the caller) |
 
 **Note:** `sebby.config`'s `Settings` deliberately does NOT read ambient OS
@@ -73,7 +73,7 @@ Some modules need extra dependencies, installed via `uv add 'sebby[extra-name]'`
 | `logging` | `sebby.logging` |
 | `http` | `sebby.http` |
 
-`sebby.storage`, `sebby.cache`, `sebby.cli`, and `sebby.retry` are stdlib-only and need no extra.
+`sebby.storage`, `sebby.cache`, `sebby.cli`, `sebby.retry`, and `sebby.notify` are stdlib-only and need no extra.
 
 ## Shared config
 

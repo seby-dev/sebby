@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from sebby.http.jobs import JobNotFoundError, JobStatus, JobStore
@@ -90,3 +92,45 @@ def test_create_raises_when_full_and_nothing_finished_to_evict():
 
     with pytest.raises(RuntimeError):
         store.create()
+
+
+def test_create_evicts_finished_job_even_when_a_newer_in_flight_job_exists():
+    clock = {"t": 0.0}
+    store = JobStore(max_jobs=2, clock=lambda: clock["t"])
+
+    clock["t"] = 1.0
+    finished_job_id = store.create()
+    store.mark_done(finished_job_id, "done")
+
+    clock["t"] = 2.0
+    in_flight_job_id = store.create()  # newer, but still PENDING
+
+    clock["t"] = 3.0
+    new_job_id = store.create()  # at capacity — must evict finished_job_id, NOT in_flight_job_id
+
+    with pytest.raises(JobNotFoundError):
+        store.get(finished_job_id)
+    assert store.get(in_flight_job_id).status == JobStatus.PENDING
+    assert store.get(new_job_id).status == JobStatus.PENDING
+
+
+def test_create_is_thread_safe_under_concurrent_load():
+    store = JobStore(max_jobs=1000)
+    errors: list[Exception] = []
+
+    def worker() -> None:
+        try:
+            for _ in range(40):
+                store.create()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors
+    assert len(store._jobs) == 320
+    assert len(store._jobs) <= 1000

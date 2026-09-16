@@ -1,7 +1,6 @@
 import os
 import secrets
-from collections.abc import Callable
-from typing import Annotated
+from typing import Annotated, Protocol
 
 from fastapi import Header, HTTPException, status
 
@@ -10,9 +9,11 @@ class MissingSharedSecretEnvVarError(Exception):
     pass
 
 
-def require_shared_secret(
-    env_var: str, *, header_name: str = "X-API-Key"
-) -> Callable[[str | None], None]:
+class _AuthDependency(Protocol):
+    def __call__(self, provided: str | None = None) -> None: ...
+
+
+def require_shared_secret(env_var: str, *, header_name: str = "X-API-Key") -> _AuthDependency:
     """Build a FastAPI dependency requiring a shared-secret header.
 
     Reads the expected secret from `env_var` at CALL time (when this

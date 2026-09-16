@@ -44,6 +44,22 @@ def test_add_content_length_limit_rejects_declared_oversized_body():
     assert response.status_code == 413
 
 
+def test_add_content_length_limit_rejects_non_numeric_header():
+    client = TestClient(_build_app())
+
+    response = client.post("/upload", content=b"x", headers={"Content-Length": "abc"})
+
+    assert response.status_code == 400
+
+
+def test_add_content_length_limit_rejects_negative_header():
+    client = TestClient(_build_app())
+
+    response = client.post("/upload", content=b"x", headers={"Content-Length": "-5"})
+
+    assert response.status_code == 400
+
+
 def test_read_capped_allows_body_within_cap():
     client = TestClient(_build_app())
 

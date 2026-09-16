@@ -4,7 +4,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from starlette.concurrency import run_in_threadpool
+from fastapi.concurrency import run_in_threadpool
 
 
 async def write_temp_file(data: bytes, *, suffix: str = "") -> Path:

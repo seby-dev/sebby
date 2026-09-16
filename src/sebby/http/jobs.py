@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -41,6 +42,11 @@ class JobStore:
     `result`/`error`), so a caller polling `get(job_id).status` and seeing
     DONE/ERROR is guaranteed to also see the corresponding result/error
     already set — no lock needed for that read.
+
+    Thread-safe for concurrent `create()` calls (guarded by an internal
+    lock) — this matters because FastAPI runs synchronous `def` endpoints
+    in a thread pool. Still NOT process-shared: one instance per running
+    server process.
     """
 
     def __init__(
@@ -49,15 +55,19 @@ class JobStore:
         self._max_jobs = max_jobs
         self._clock = clock
         self._jobs: dict[str, Job] = {}
+        self._lock = threading.Lock()
 
     def create(self) -> str:
-        if len(self._jobs) >= self._max_jobs:
-            self._evict_oldest_finished()
-        job_id = str(uuid.uuid4())
-        self._jobs[job_id] = Job(id=job_id, created_at=self._clock())
-        return job_id
+        with self._lock:
+            if len(self._jobs) >= self._max_jobs:
+                self._evict_oldest_finished()
+            job_id = str(uuid.uuid4())
+            self._jobs[job_id] = Job(id=job_id, created_at=self._clock())
+            return job_id
 
     def _evict_oldest_finished(self) -> None:
+        # Only ever called while `create()` already holds `self._lock` —
+        # do not acquire it again here (non-reentrant, would deadlock).
         finished = [j for j in self._jobs.values() if j.status in (JobStatus.DONE, JobStatus.ERROR)]
         if not finished:
             raise RuntimeError("job store is full and no finished jobs can be evicted")

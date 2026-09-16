@@ -6,9 +6,9 @@ from sebby.notify import escape_markdown_v2, send_telegram_alert
 
 
 def test_escape_markdown_v2_escapes_all_special_chars():
-    result = escape_markdown_v2("a_b*c[d](e)~f`g>h#i+j-k=l|m{n}o.p!q")
+    result = escape_markdown_v2(r"a_b*c[d](e)~f`g>h#i+j-k=l|m{n}o.p!q\r")
 
-    assert result == r"a\_b\*c\[d\]\(e\)\~f\`g\>h\#i\+j\-k\=l\|m\{n\}o\.p\!q"
+    assert result == r"a\_b\*c\[d\]\(e\)\~f\`g\>h\#i\+j\-k\=l\|m\{n\}o\.p\!q\\r"
 
 
 def test_escape_markdown_v2_leaves_plain_text_unchanged():
@@ -50,3 +50,12 @@ def test_send_telegram_alert_skips_escaping_when_escape_false():
     )
 
     assert calls[0]["json"]["text"] == "raw *text*"
+
+
+def test_send_telegram_alert_returns_post_fn_result():
+    def fake_post(url: str, *, json: dict[str, Any]) -> str:
+        return "fake-response"
+
+    result = send_telegram_alert("hi", bot_token="T", chat_id="c", post_fn=fake_post)
+
+    assert result == "fake-response"
