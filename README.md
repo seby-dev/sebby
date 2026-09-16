@@ -54,6 +54,7 @@ schema, respecting Anthropic's four-breakpoint-per-request cap.
 | `sebby.config` | Environment-driven settings base class (`Settings`) and a singleton accessor (`get_settings`) |
 | `sebby.logging` | structlog-to-stdlib logging setup with secret scrubbing and optional Sentry |
 | `sebby.http` | FastAPI helpers: shared-secret auth, localhost CORS, upload-size limits, threadpool file writes, bounded async job store |
+| `sebby.notify` | Telegram alert sending with MarkdownV2 escaping (no extra needed — the HTTP client is injected by the caller) |
 
 **Note:** `sebby.config`'s `Settings` deliberately does NOT read ambient OS
 environment variables (only `APP_ENV` itself, and only to pick a dotenv
