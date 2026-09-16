@@ -57,6 +57,6 @@ schema, respecting Anthropic's four-breakpoint-per-request cap.
 
       jobs:
         ci:
-          uses: seby-dev/sebby/.github/workflows/python-ci.yml@main
+          uses: seby-dev/sebby/.github/workflows/ci.yml@main
           with:
             mypy-target: your_package_dir
