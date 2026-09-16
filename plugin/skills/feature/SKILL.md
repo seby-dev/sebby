@@ -25,24 +25,31 @@ implements, and opens a PR. If `autopilot` isn't available, use
 
 Invoke the `simplify` skill on the changed files. Apply all suggested
 cleanups (reuse, dead code, altitude). Re-run only this step if fixes are
-needed.
+needed. If `simplify` isn't available, review the changed files manually
+for reuse, dead code, and altitude issues instead of skipping this step.
 
 ### 3. Code review — `/code-review`
 
 Invoke the `code-review` skill at **medium** effort with `--fix` to apply
 findings automatically. If significant rework is needed, loop back to
-step 2 after fixing.
+step 2 after fixing. If `code-review` isn't available, review the diff
+manually for bugs, convention violations, and missed edge cases instead of
+skipping this step.
 
 ### 4. Security review — `/security-review`
 
 Invoke the `security-review` skill on the pending branch diff. Fix any
-findings, then re-run steps 3-4 until both pass clean.
+findings, then re-run steps 3-4 until both pass clean. If `security-review`
+isn't available, check the diff manually for injection risks, hardcoded
+secrets, and insecure API usage instead of skipping this step.
 
 ### 5. Verify — `/verify`
 
 Invoke the `verify` skill to run the app and confirm the feature works
 end-to-end on the golden path and key edge cases. Document any regressions
-found and fix them before marking the workflow complete.
+found and fix them before marking the workflow complete. If `verify` isn't
+available, run the app and exercise the golden path and key edge cases
+manually instead of skipping this step.
 
 ### 6. Report
 
@@ -57,10 +64,14 @@ Summarise in a single message:
 /feature <task description>
 ```
 
+When installed as a plugin, invoke this skill namespaced:
+`/sebby-toolkit:feature <task description>`.
+
 **Examples:**
 ```
 /feature Add a keyword filter that rejects records whose name matches a configurable blocklist
 /feature Add a get_pending_items tool so the user can ask what's awaiting a reply
+/sebby-toolkit:feature Add a get_pending_items tool so the user can ask what's awaiting a reply
 ```
 
 ## Notes

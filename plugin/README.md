@@ -19,7 +19,10 @@ template, generalized from patterns duplicated across several projects.
 - **Template**: `templates/settings.json` — a safe-defaults permission
   deny-list. Copy its contents into your project's own
   `.claude/settings.json` (plugins can't write to a consuming project's
-  settings file automatically).
+  settings file automatically). Its `"defaultMode": "dontAsk"` with no
+  `allow` list isn't a complete permission setup on its own — add your own
+  `allow` rules (project- or user-level) for anything to actually run
+  without individual prompts.
 
 ## Configuring the hooks
 

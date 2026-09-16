@@ -1,5 +1,6 @@
 {
   "name": "sebby-toolkit-marketplace",
+  "description": "Shared Claude Code plugins for seby-dev's projects.",
   "owner": {
     "name": "seby-dev"
   },
