@@ -48,3 +48,15 @@ schema, respecting Anthropic's four-breakpoint-per-request cap.
 |---|---|
 | `sebby.retry` | Generic retry/backoff and retry-once-on-server-error helpers |
 | `sebby.llm` | Multi-provider LLM client with Anthropic prompt caching |
+
+## Shared config
+
+- `configs/ruff.toml` — the ruff config this repo uses, usable standalone via `ruff check --config path/to/sebby/configs/ruff.toml .` in another project, or copy the `[lint] select = [...]` block into that project's own `pyproject.toml`.
+- `configs/mypy.ini` — likewise, via `mypy --config-file path/to/sebby/configs/mypy.ini src`, or copy the `[mypy]` block into that project's own config.
+- `.github/workflows/ci.yml` is a reusable workflow other repos can call directly:
+
+      jobs:
+        ci:
+          uses: seby-dev/sebby/.github/workflows/python-ci.yml@main
+          with:
+            mypy-target: your_package_dir

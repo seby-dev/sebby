@@ -3,6 +3,17 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        default: "3.11"
+      mypy-target:
+        type: string
+        default: "src"
+      extra:
+        type: string
+        default: "dev"
 
 jobs:
   test:
@@ -10,7 +21,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
-      - run: uv sync --extra dev
+      - run: uv sync --extra ${{ inputs.extra || 'dev' }}
       - run: uv run ruff check .
-      - run: uv run mypy src
+      - run: uv run ruff format --check .
+      - run: uv run mypy ${{ inputs.mypy-target || 'src' }}
       - run: uv run pytest
