@@ -76,9 +76,11 @@ def test_retry_with_backoff_does_not_retry_non_retryable_exception() -> None:
 
 def test_retry_with_backoff_calls_on_attempt_callback() -> None:
     seen: list[int] = []
+    attempts = {"n": 0}
 
     def fn() -> str:
-        if len(seen) < 2:
+        attempts["n"] += 1
+        if attempts["n"] < 3:
             raise ValueError("transient")
         return "ok"
 

@@ -28,14 +28,11 @@ def retry_with_backoff(
     """
     last_exc: Exception | None = None
     for attempt in range(1, max_attempts + 1):
+        if on_attempt is not None:
+            on_attempt(attempt)
         try:
-            result = fn()
-            if on_attempt is not None:
-                on_attempt(attempt)
-            return result
+            return fn()
         except retryable_exceptions as exc:
-            if on_attempt is not None:
-                on_attempt(attempt)
             last_exc = exc
             if attempt == max_attempts:
                 break
