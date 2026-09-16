@@ -88,9 +88,7 @@ class LLMClient:
                 )
 
             try:
-                response = retry_with_backoff(
-                    _call, max_attempts=self._max_attempts_per_provider
-                )
+                response = retry_with_backoff(_call, max_attempts=self._max_attempts_per_provider)
             except RetryExhaustedError as exc:
                 errors.append(exc)
                 continue
@@ -98,9 +96,7 @@ class LLMClient:
             self._record_usage(provider, response)
             return response
 
-        raise AllProvidersFailedError(
-            f"all {len(self._providers)} provider(s) failed: {errors}"
-        )
+        raise AllProvidersFailedError(f"all {len(self._providers)} provider(s) failed: {errors}")
 
     def _record_usage(self, provider: ProviderConfig, response: Any) -> None:
         if self._on_usage is None:
@@ -114,10 +110,7 @@ class LLMClient:
                 model=provider.model,
                 input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
                 output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                cache_creation_input_tokens=getattr(
-                    usage, "cache_creation_input_tokens", 0
-                )
-                or 0,
+                cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
                 cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
             )
         )

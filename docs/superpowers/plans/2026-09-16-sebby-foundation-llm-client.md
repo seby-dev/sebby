@@ -648,9 +648,7 @@ def test_count_cache_breakpoints_counts_messages_and_tools() -> None:
     messages = [
         {
             "role": "user",
-            "content": [
-                {"type": "text", "text": "a", "cache_control": {"type": "ephemeral"}}
-            ],
+            "content": [{"type": "text", "text": "a", "cache_control": {"type": "ephemeral"}}],
         },
     ]
     tools = [{"name": "search", "cache_control": {"type": "ephemeral"}}]
@@ -733,9 +731,7 @@ def mark_cache_breakpoint_on_tools(tools: list[dict[str, Any]]) -> list[dict[str
     return [*head, marked_last]
 
 
-def count_cache_breakpoints(
-    messages: list[dict[str, Any]], tools: list[dict[str, Any]]
-) -> int:
+def count_cache_breakpoints(messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> int:
     """Count cache_control breakpoints already present, so callers can check
     against Anthropic's per-request cap before adding more.
     """
@@ -756,8 +752,7 @@ def assert_within_breakpoint_cap(
     count = count_cache_breakpoints(messages, tools)
     if count > MAX_CACHE_BREAKPOINTS:
         raise TooManyCacheBreakpointsError(
-            f"{count} cache_control breakpoints exceeds Anthropic's cap of "
-            f"{MAX_CACHE_BREAKPOINTS}"
+            f"{count} cache_control breakpoints exceeds Anthropic's cap of {MAX_CACHE_BREAKPOINTS}"
         )
 ```
 
@@ -1061,9 +1056,7 @@ class LLMClient:
                 )
 
             try:
-                response = retry_with_backoff(
-                    _call, max_attempts=self._max_attempts_per_provider
-                )
+                response = retry_with_backoff(_call, max_attempts=self._max_attempts_per_provider)
             except RetryExhaustedError as exc:
                 errors.append(exc)
                 continue
@@ -1071,9 +1064,7 @@ class LLMClient:
             self._record_usage(provider, response)
             return response
 
-        raise AllProvidersFailedError(
-            f"all {len(self._providers)} provider(s) failed: {errors}"
-        )
+        raise AllProvidersFailedError(f"all {len(self._providers)} provider(s) failed: {errors}")
 
     def _record_usage(self, provider: ProviderConfig, response: Any) -> None:
         if self._on_usage is None:
@@ -1087,10 +1078,7 @@ class LLMClient:
                 model=provider.model,
                 input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
                 output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                cache_creation_input_tokens=getattr(
-                    usage, "cache_creation_input_tokens", 0
-                )
-                or 0,
+                cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
                 cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
             )
         )

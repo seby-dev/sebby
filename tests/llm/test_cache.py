@@ -65,9 +65,7 @@ def test_count_cache_breakpoints_counts_messages_and_tools() -> None:
     messages = [
         {
             "role": "user",
-            "content": [
-                {"type": "text", "text": "a", "cache_control": {"type": "ephemeral"}}
-            ],
+            "content": [{"type": "text", "text": "a", "cache_control": {"type": "ephemeral"}}],
         },
     ]
     tools = [{"name": "search", "cache_control": {"type": "ephemeral"}}]

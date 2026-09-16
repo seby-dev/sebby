@@ -50,9 +50,7 @@ def mark_cache_breakpoint_on_tools(tools: list[dict[str, Any]]) -> list[dict[str
     return [*head, marked_last]
 
 
-def count_cache_breakpoints(
-    messages: list[dict[str, Any]], tools: list[dict[str, Any]]
-) -> int:
+def count_cache_breakpoints(messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> int:
     """Count cache_control breakpoints already present, so callers can check
     against Anthropic's per-request cap before adding more.
     """
@@ -73,6 +71,5 @@ def assert_within_breakpoint_cap(
     count = count_cache_breakpoints(messages, tools)
     if count > MAX_CACHE_BREAKPOINTS:
         raise TooManyCacheBreakpointsError(
-            f"{count} cache_control breakpoints exceeds Anthropic's cap of "
-            f"{MAX_CACHE_BREAKPOINTS}"
+            f"{count} cache_control breakpoints exceeds Anthropic's cap of {MAX_CACHE_BREAKPOINTS}"
         )
