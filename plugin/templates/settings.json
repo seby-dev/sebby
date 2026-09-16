@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(rm -fr *)",
+      "Bash(* --force *)",
+      "Bash(git push --force*)",
+      "Bash(git push -f *)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -f*)",
+      "Bash(chmod 777 *)",
+      "Bash(sudo *)",
+      "Bash(su *)",
+      "Bash(* DROP *)",
+      "Bash(* DROP TABLE*)",
+      "Bash(* DELETE FROM*)",
+      "Bash(mkfs*)",
+      "Bash(dd if=*)",
+      "Bash(shutdown*)",
+      "Bash(reboot*)",
+      "Bash(kill -9 *)",
+      "Bash(pkill *)"
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "sebby-toolkit",
+  "version": "0.1.0",
+  "description": "Shared Claude Code hooks, skills, and settings: secret-safety hooks, quality-gate hooks, PR/docs workflow hooks, a worktree-redirect hook, and a generalized feature-development skill.",
+  "author": {
+    "name": "seby-dev"
+  },
+  "keywords": ["hooks", "quality-gates", "git-safety", "feature-workflow"]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "sebby-toolkit-marketplace",
+  "owner": {
+    "name": "seby-dev"
+  },
+  "plugins": [
+    {
+      "name": "sebby-toolkit",
+      "source": "./plugin",
+      "description": "Shared Claude Code hooks, skills, and settings for seby-dev's projects."
+    }
+  ]
+}
