@@ -1,73 +1,76 @@
 {
-  "PreToolUse": [
-    {
-      "matcher": "Bash",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/block_env_git.py\""
-        }
-      ]
-    }
-  ],
-  "PostToolUse": [
-    {
-      "matcher": "Bash",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/post_pr_created.py\"",
-          "if": "Bash(gh pr create:*)"
-        },
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/post_merge_docs_update.py\"",
-          "if": "Bash(gh pr merge:*)"
-        }
-      ]
-    },
-    {
-      "matcher": "Write|Edit",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/post_edit_lint.py\""
-        }
-      ]
-    },
-    {
-      "matcher": "Read|Write|Edit",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/scrub_env_transcript.py\"",
-          "async": true
-        }
-      ]
-    }
-  ],
-  "Stop": [
-    {
-      "hooks": [
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/stop_quality_check.py\""
-        },
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/scrub_env_transcript.py\""
-        }
-      ]
-    }
-  ],
-  "SessionStart": [
-    {
-      "hooks": [
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/worktree_redirect.py\""
-        }
-      ]
-    }
-  ]
+  "description": "sebby-toolkit hooks: secret safety, quality gates, PR/docs workflow, worktree redirect",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/block_env_git.py\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/post_pr_created.py\"",
+            "if": "Bash(gh pr create:*)"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/post_merge_docs_update.py\"",
+            "if": "Bash(gh pr merge:*)"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/post_edit_lint.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/scrub_env_transcript.py\"",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/stop_quality_check.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/scrub_env_transcript.py\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/worktree_redirect.py\""
+          }
+        ]
+      }
+    ]
+  }
 }

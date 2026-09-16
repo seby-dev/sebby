@@ -1193,84 +1193,98 @@ git commit -m "feat: add plugin worktree-redirect SessionStart hook"
 
 ```json
 {
-  "PreToolUse": [
-    {
-      "matcher": "Bash",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/block_env_git.py\""
-        }
-      ]
-    }
-  ],
-  "PostToolUse": [
-    {
-      "matcher": "Bash",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/post_pr_created.py\"",
-          "if": "Bash(gh pr create:*)"
-        },
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/post_merge_docs_update.py\"",
-          "if": "Bash(gh pr merge:*)"
-        }
-      ]
-    },
-    {
-      "matcher": "Write|Edit",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/post_edit_lint.py\""
-        }
-      ]
-    },
-    {
-      "matcher": "Read|Write|Edit",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/scrub_env_transcript.py\"",
-          "async": true
-        }
-      ]
-    }
-  ],
-  "Stop": [
-    {
-      "hooks": [
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/stop_quality_check.py\""
-        },
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/scrub_env_transcript.py\""
-        }
-      ]
-    }
-  ],
-  "SessionStart": [
-    {
-      "hooks": [
-        {
-          "type": "command",
-          "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/worktree_redirect.py\""
-        }
-      ]
-    }
-  ]
+  "description": "sebby-toolkit hooks: secret safety, quality gates, PR/docs workflow, worktree redirect",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/block_env_git.py\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/post_pr_created.py\"",
+            "if": "Bash(gh pr create:*)"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/post_merge_docs_update.py\"",
+            "if": "Bash(gh pr merge:*)"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/post_edit_lint.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/scrub_env_transcript.py\"",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/stop_quality_check.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/scrub_env_transcript.py\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/worktree_redirect.py\""
+          }
+        ]
+      }
+    ]
+  }
 }
 ```
+
+A plugin's `hooks/hooks.json` must nest the event-keyed object one level
+deeper, under a top-level `"hooks"` key (plus a `"description"` field) —
+this differs from a project's `.claude/settings.json`, where the
+event-keyed object IS the top level of that file's own `"hooks"` field.
 
 - [ ] **Step 2: Validate the JSON is well-formed**
 
 Run: `cd /Users/sebby/Developer/sebby && python3 -c "import json; json.load(open('plugin/hooks/hooks.json'))" && echo OK`
 Expected: `OK`
+
+Well-formed JSON isn't sufficient proof this file is correct — it says
+nothing about the required `"hooks"` wrapper shape. The real verification
+is `claude plugin validate --strict ./plugin`, which checks the file
+against the plugin schema; run it too and confirm it reports validation
+passed.
 
 - [ ] **Step 3: Commit**
 
