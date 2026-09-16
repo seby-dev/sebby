@@ -51,3 +51,14 @@ def test_read_capped_allows_body_within_cap():
 
     assert response.status_code == 200
     assert response.json() == {"size": 5}
+
+
+def test_read_capped_rejects_oversized_body_without_content_length():
+    client = TestClient(_build_app())
+
+    def body_generator():
+        yield b"x" * 20
+
+    response = client.post("/upload-streamed", content=body_generator())
+
+    assert response.status_code == 413
