@@ -13,13 +13,19 @@ except ImportError:  # pragma: no cover - Windows has no fcntl
 
 
 class AtomicJSONStore:
-    """A file-backed JSON store with atomic, file-locked writes.
+    """A file-backed JSON store with atomic writes.
 
     Writes go to a temp file in the same directory, then `os.replace` swaps
-    it into place — a reader never observes a partially-written file. On
-    POSIX, writes and reads also take an `fcntl` file lock so concurrent
-    processes don't interleave; on platforms without `fcntl` (e.g. Windows),
-    the atomic-rename guarantee alone still prevents torn reads.
+    it into place, so a reader never observes a partially-written file —
+    that's the guarantee this class provides.
+
+    This class does NOT provide cross-process mutual exclusion for
+    concurrent writers. On POSIX, `write()` does take an `fcntl` lock, but
+    on the throwaway `mkstemp` temp file, not on the target path — no other
+    process can ever open that temp file, so the lock doesn't coordinate
+    anything between processes. Two processes doing a concurrent
+    read-modify-write can still lose an update. A future version may add a
+    sidecar lockfile for that; this one doesn't.
     """
 
     def __init__(self, path: str | Path) -> None:

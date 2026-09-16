@@ -61,3 +61,35 @@ def test_setup_logging_is_idempotent_does_not_stack_handlers():
 def test_setup_logging_raises_clear_error_when_sentry_requested_but_not_installed():
     with pytest.raises(ImportError, match="sentry-sdk"):
         setup_logging(console_stream=io.StringIO(), sentry_dsn="https://fake@sentry.example/1")
+
+
+def test_setup_logging_scrubs_and_timestamps_stdlib_originated_records(tmp_path):
+    """Records from plain stdlib `logging` (as used by third-party libraries
+    like litellm/httpx) are "foreign" to structlog and bypass
+    `structlog.configure(processors=[...])` entirely — they only get scrubbed
+    and timestamped if `foreign_pre_chain` runs the shared processors on
+    them too. This proves that wiring, using `logging.getLogger(...)`
+    directly rather than `structlog.get_logger()`.
+    """
+    stream = io.StringIO()
+    log_file = tmp_path / "app.log"
+    setup_logging(
+        console_stream=stream,
+        json_file=log_file,
+        scrub_pattern=re.compile(r"sk-[A-Za-z0-9]+"),
+        scrub_replacement="***REDACTED***",
+    )
+
+    logging.getLogger("some.third.party.lib").warning("using key sk-abc123XYZ")
+
+    console_output = stream.getvalue()
+    assert "sk-abc123XYZ" not in console_output
+    assert "***REDACTED***" in console_output
+
+    lines = log_file.read_text().strip().splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert "sk-abc123XYZ" not in record["event"]
+    assert "***REDACTED***" in record["event"]
+    assert "timestamp" in record
+    assert record["level"] == "warning"

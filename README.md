@@ -48,6 +48,29 @@ schema, respecting Anthropic's four-breakpoint-per-request cap.
 |---|---|
 | `sebby.retry` | Generic retry/backoff and retry-once-on-server-error helpers |
 | `sebby.llm` | Multi-provider LLM client with Anthropic prompt caching |
+| `sebby.storage` | Atomic, file-locked JSON store (no cross-process write exclusion — see docstring) |
+| `sebby.cache` | Trivial in-memory TTL cache |
+| `sebby.cli` | `run_main` — catch-print-exit-code convention for CLI entry points |
+| `sebby.config` | Environment-driven settings base class (`Settings`) and a singleton accessor (`get_settings`) |
+| `sebby.logging` | structlog-to-stdlib logging setup with secret scrubbing and optional Sentry |
+
+**Note:** `sebby.config`'s `Settings` deliberately does NOT read ambient OS
+environment variables (only `APP_ENV` itself, and only to pick a dotenv
+file) — even a field with a default silently ignores a same-named env var.
+If you need standard env-var precedence, override
+`settings_customise_sources` in your subclass to include `env_settings`.
+
+## Optional extras
+
+Some modules need extra dependencies, installed via `uv add 'sebby[extra-name]'` (or add multiple: `uv add 'sebby[llm,config,logging]'`):
+
+| Extra | Needed for |
+|---|---|
+| `llm` | `sebby.llm` |
+| `config` | `sebby.config` |
+| `logging` | `sebby.logging` |
+
+`sebby.storage`, `sebby.cache`, `sebby.cli`, and `sebby.retry` are stdlib-only and need no extra.
 
 ## Shared config
 
@@ -60,3 +83,7 @@ schema, respecting Anthropic's four-breakpoint-per-request cap.
           uses: seby-dev/sebby/.github/workflows/ci.yml@main
           with:
             mypy-target: your_package_dir
+            # Defaults to "--extra dev". Override for a repo whose
+            # pyproject.toml doesn't declare a "dev" extra — for example a
+            # repo using PEP 735 dependency groups instead:
+            # sync-args: "--group dev"

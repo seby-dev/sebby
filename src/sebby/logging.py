@@ -40,7 +40,11 @@ def setup_logging(
     `scrub_pattern`, if given, is applied to every string field in every
     log event before it's rendered, replacing matches with
     `scrub_replacement` — use it to redact secrets (API keys, tokens) that
-    might otherwise end up in logs.
+    might otherwise end up in logs. This applies to events logged through
+    structlog AND to "foreign" records from stdlib `logging` (which is what
+    third-party libraries such as litellm and httpx use) — both paths run
+    the same shared processors, including the scrub step, before
+    rendering.
 
     `sentry_dsn`, if given, initializes Sentry error tracking. Requires the
     `sentry-sdk` package (not bundled with sebby's `logging` extra — a
@@ -68,11 +72,15 @@ def setup_logging(
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
     for handler in list(root_logger.handlers):
+        handler.close()
         root_logger.removeHandler(handler)
 
     console_handler = logging.StreamHandler(console_stream)
     console_handler.setFormatter(
-        structlog.stdlib.ProcessorFormatter(processor=structlog.dev.ConsoleRenderer())
+        structlog.stdlib.ProcessorFormatter(
+            processor=structlog.dev.ConsoleRenderer(),
+            foreign_pre_chain=shared_processors,
+        )
     )
     root_logger.addHandler(console_handler)
 
@@ -83,7 +91,10 @@ def setup_logging(
             file_path, maxBytes=10_000_000, backupCount=3, encoding="utf-8"
         )
         file_handler.setFormatter(
-            structlog.stdlib.ProcessorFormatter(processor=structlog.processors.JSONRenderer())
+            structlog.stdlib.ProcessorFormatter(
+                processor=structlog.processors.JSONRenderer(),
+                foreign_pre_chain=shared_processors,
+            )
         )
         root_logger.addHandler(file_handler)
 

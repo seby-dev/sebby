@@ -1,4 +1,8 @@
 name: CI
+
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -11,9 +15,9 @@ on:
       mypy-target:
         type: string
         default: "src"
-      extra:
+      sync-args:
         type: string
-        default: "dev"
+        default: "--extra dev"
 
 jobs:
   test:
@@ -21,8 +25,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
-      - run: uv sync --extra ${{ inputs.extra || 'dev' }}
+      - name: Install Python
+        env:
+          PYTHON_VERSION: ${{ inputs.python-version || '3.11' }}
+        run: uv python install "$PYTHON_VERSION"
+      - name: Sync dependencies
+        env:
+          SYNC_ARGS: ${{ inputs.sync-args || '--extra dev' }}
+        run: uv sync $SYNC_ARGS
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run mypy ${{ inputs.mypy-target || 'src' }}
+      - name: Type check
+        env:
+          MYPY_TARGET: ${{ inputs.mypy-target || 'src' }}
+        run: uv run mypy "$MYPY_TARGET"
       - run: uv run pytest

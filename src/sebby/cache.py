@@ -12,6 +12,9 @@ class TTLCache(Generic[T]):
 
     `clock` defaults to `time.monotonic` but is injectable so tests can
     advance time deterministically instead of sleeping for real.
+
+    This cache is unbounded (no max-size eviction — entries stay until they
+    expire or are cleared) and not thread-safe.
     """
 
     def __init__(self, ttl_seconds: float, *, clock: Callable[[], float] = time.monotonic) -> None:
