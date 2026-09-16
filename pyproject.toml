@@ -9,6 +9,9 @@ dependencies = []
 llm = [
     "litellm>=1.50.0",
 ]
+judgement = [
+    "typesafe-sdk>=0.6.0",
+]
 config = [
     "pydantic-settings>=2.0.0",
 ]
@@ -20,6 +23,7 @@ http = [
 ]
 dev = [
     "sebby[llm]",
+    "sebby[judgement]",
     "sebby[config]",
     "sebby[logging]",
     "sebby[http]",

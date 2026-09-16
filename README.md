@@ -42,12 +42,39 @@ failing over to the next. For the `anthropic` provider, it automatically
 marks a prompt-cache breakpoint on the last message and the last tool
 schema, respecting Anthropic's four-breakpoint-per-request cap.
 
+## `sebby.judgement`
+
+    from sebby.judgement import make_client, record_usage
+    from typesafe_sdk import Choice
+
+    client = make_client(api_key=settings.typesafe_api_key)
+
+    response = client.system_one(
+        {"header": "Sunday Service", "time": "10:30am"},
+        {"eligibility": Choice(instructions="...", criteria={"auto_eligible": None})},
+    )
+    record_usage(response, model="jev-latest", on_usage=lambda record: print(record))
+
+    answer = response.choices["eligibility"]
+    print(answer.choice, answer.confidence)
+
+`make_client` wires up [TypeSafe's Python SDK](https://docs.typesafe.ai/sdk/python)
+with an explicit `api_key` — `sebby.config`'s `Settings` never reads ambient
+env vars (see below), so this avoids relying on the SDK's own
+`TYPESAFE_API_KEY` auto-detection. The SDK itself already provides typed
+questions/answers, sensible default retries, and typed errors
+(`TypeSafeAPIError` and friends) — import those straight from `typesafe_sdk`.
+`record_usage` reports through the same `UsageRecord` shape `sebby.llm`
+uses (`provider="typesafe"`), so LLM and TypeSafe spend go through one
+usage-tracking callback.
+
 ## Modules
 
 | Module | Purpose |
 |---|---|
 | `sebby.retry` | Generic retry/backoff and retry-once-on-server-error helpers |
 | `sebby.llm` | Multi-provider LLM client with Anthropic prompt caching |
+| `sebby.judgement` | Construction/usage-tracking helpers for TypeSafe's typed Choice/Score/Noul judgments |
 | `sebby.storage` | Atomic, file-locked JSON store (no cross-process write exclusion — see docstring) |
 | `sebby.cache` | Trivial in-memory TTL cache |
 | `sebby.cli` | `run_main` — catch-print-exit-code convention for CLI entry points |
@@ -69,6 +96,7 @@ Some modules need extra dependencies, installed via `uv add 'sebby[extra-name]'`
 | Extra | Needed for |
 |---|---|
 | `llm` | `sebby.llm` |
+| `judgement` | `sebby.judgement` (installs `typesafe-sdk`; also import `Choice`/`Noul`/`Score`/etc. straight from it) |
 | `config` | `sebby.config` |
 | `logging` | `sebby.logging` |
 | `http` | `sebby.http` |
