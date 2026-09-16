@@ -2,6 +2,7 @@
 
 from sebby.http.auth import MissingSharedSecretEnvVarError, require_shared_secret
 from sebby.http.cors import add_localhost_cors
+from sebby.http.files import write_temp_file
 from sebby.http.limits import PayloadTooLargeError, add_content_length_limit, read_capped
 
 __all__ = [
@@ -11,4 +12,5 @@ __all__ = [
     "add_localhost_cors",
     "read_capped",
     "require_shared_secret",
+    "write_temp_file",
 ]
