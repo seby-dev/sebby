@@ -10,10 +10,12 @@ class TooManyCacheBreakpointsError(Exception):
     pass
 
 
-def _as_content_blocks(content: str | list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _as_content_blocks(content: object) -> list[dict[str, Any]]:
     if isinstance(content, str):
         return [{"type": "text", "text": content}]
-    return list(content)
+    if isinstance(content, list):
+        return list(content)
+    return []
 
 
 def mark_cache_breakpoint(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -29,9 +31,9 @@ def mark_cache_breakpoint(messages: list[dict[str, Any]]) -> list[dict[str, Any]
         return []
 
     *head, last = messages
-    blocks = _as_content_blocks(last["content"])
+    blocks = _as_content_blocks(last.get("content"))
     if not blocks:
-        return [*head, last]
+        return [*head, dict(last)]
 
     marked_blocks = [*blocks[:-1], {**blocks[-1], "cache_control": dict(_CACHE_CONTROL)}]
     marked_last = {**last, "content": marked_blocks}

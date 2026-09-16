@@ -86,3 +86,41 @@ def test_assert_within_breakpoint_cap_passes_at_exactly_the_cap() -> None:
     messages = [{"role": "user", "content": [block]} for _ in range(MAX_CACHE_BREAKPOINTS)]
 
     assert_within_breakpoint_cap(messages, [])  # must not raise
+
+
+def test_mark_cache_breakpoint_handles_none_content_without_crashing() -> None:
+    # Standard shape for an assistant turn that only makes tool calls.
+    messages = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "1"}]},
+    ]
+
+    result = mark_cache_breakpoint(messages)
+
+    assert result[0]["content"] == "first"
+    # Nothing to mark on a None-content message: it comes back unchanged,
+    # not crashed, and not mutated in place.
+    assert result[1] == {"role": "assistant", "content": None, "tool_calls": [{"id": "1"}]}
+    assert result[1] is not messages[1]
+
+
+def test_mark_cache_breakpoint_handles_missing_content_key_without_crashing() -> None:
+    messages = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "tool_calls": [{"id": "1"}]},
+    ]
+
+    result = mark_cache_breakpoint(messages)
+
+    assert result[0]["content"] == "first"
+    assert result[1] == {"role": "assistant", "tool_calls": [{"id": "1"}]}
+    assert "content" not in result[1]
+
+
+def test_count_cache_breakpoints_handles_none_content() -> None:
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "1"}]},
+    ]
+
+    assert count_cache_breakpoints(messages, []) == 0

@@ -2066,25 +2066,27 @@ wheels = [
 name = "sebby"
 version = "0.1.0"
 source = { editable = "." }
-dependencies = [
-    { name = "litellm" },
-]
 
 [package.optional-dependencies]
 dev = [
+    { name = "litellm" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
 ]
+llm = [
+    { name = "litellm" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "litellm", specifier = ">=1.50.0" },
+    { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.50.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
+    { name = "sebby", extras = ["llm"], marker = "extra == 'dev'" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["llm", "dev"]
 
 [[package]]
 name = "six"
