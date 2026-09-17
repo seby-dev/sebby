@@ -85,7 +85,11 @@ report rather than skipping silently -- the user can run
 Summarize in one message:
 - What ran: code-reviewer, semgrep, and (if applicable)
   silent-failure-hunter and each review-pr aspect actually dispatched.
-- **What triage skipped**, quoting `reasons` from the JSON -- e.g.
+- **If triage's JSON couldn't be parsed** (step 2's non-zero-exit case),
+  report that explicitly — e.g. "Triage failed to run (git error); ran the
+  full review set as a fallback" — rather than silently omitting this
+  bullet because there was no `reasons` field to quote.
+- **Otherwise, what triage skipped**, quoting `reasons` from the JSON -- e.g.
   "Skipped: tests, types, comments (risk_tier: low, mode: active)". If
   `mode` is `shadow`, report it as "would have skipped" instead, since
   shadow mode runs everything regardless of tier.
