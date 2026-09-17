@@ -53,7 +53,9 @@ def get_changed_files(base: str, project_dir: Path) -> list[str]:
         text=True,
     )
     if result.returncode != 0:
-        return []
+        raise RuntimeError(
+            f"git diff failed for base={base} in {project_dir}: {result.stderr.strip()}"
+        )
     return [line for line in result.stdout.splitlines() if line]
 
 
@@ -65,7 +67,9 @@ def get_diff_text(base: str, project_dir: Path, max_chars: int = 20000) -> str:
         text=True,
     )
     if result.returncode != 0:
-        return ""
+        raise RuntimeError(
+            f"git diff failed for base={base} in {project_dir}: {result.stderr.strip()}"
+        )
     return result.stdout[:max_chars]
 
 

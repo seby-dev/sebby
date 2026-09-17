@@ -130,6 +130,28 @@ class TestSilentFailureHunterTrigger:
         assert mod.silent_failure_hunter_needed(diff) is False
 
 
+class TestGitErrorHandling:
+    def test_get_changed_files_raises_on_bad_ref(self, tmp_path: Path) -> None:
+        repo, _ = make_repo(
+            tmp_path,
+            base_files={"README.md": "hello\n"},
+            branch_files={"README.md": "hello world\n"},
+        )
+        mod = _load_script()
+        with pytest.raises(RuntimeError):
+            mod.get_changed_files("not-a-real-ref", repo)
+
+    def test_get_diff_text_raises_on_bad_ref(self, tmp_path: Path) -> None:
+        repo, _ = make_repo(
+            tmp_path,
+            base_files={"README.md": "hello\n"},
+            branch_files={"README.md": "hello world\n"},
+        )
+        mod = _load_script()
+        with pytest.raises(RuntimeError):
+            mod.get_diff_text("not-a-real-ref", repo)
+
+
 class TestCLIEndToEnd:
     def test_cli_prints_recommendation_json(self, tmp_path: Path) -> None:
         repo, base = make_repo(
