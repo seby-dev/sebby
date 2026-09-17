@@ -7,7 +7,7 @@ log_shadow_decision, and how recommend() combines them.
 from __future__ import annotations
 
 import builtins
-import importlib
+import importlib.util
 import json
 import subprocess
 import sys
@@ -87,7 +87,9 @@ class TestJevRiskTierFailOpen:
     def test_no_api_key_returns_high(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
         mod = _load_script()
-        assert mod._jev_risk_tier("some diff") == "high"
+        tier, reason = mod._jev_risk_tier("some diff")
+        assert tier == "high"
+        assert reason == "TYPESAFE_API_KEY is not set"
 
     def test_sdk_not_installed_returns_high(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delitem(sys.modules, "typesafe_sdk", raising=False)
@@ -102,7 +104,9 @@ class TestJevRiskTierFailOpen:
         monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
 
         mod = _load_script()
-        assert mod._jev_risk_tier("some diff") == "high"
+        tier, reason = mod._jev_risk_tier("some diff")
+        assert tier == "high"
+        assert reason == "typesafe_sdk is not importable"
 
     def test_jev_exception_returns_high(self, monkeypatch: pytest.MonkeyPatch) -> None:
         class ExplodingClient:
@@ -119,14 +123,18 @@ class TestJevRiskTierFailOpen:
         monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
 
         mod = _load_script()
-        assert mod._jev_risk_tier("some diff") == "high"
+        tier, reason = mod._jev_risk_tier("some diff")
+        assert tier == "high"
+        assert reason == "Jev call failed"
 
     def test_unrecognized_score_value_returns_high(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setitem(sys.modules, "typesafe_sdk", _make_fake_sdk("not_a_real_tier"))
         monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
 
         mod = _load_script()
-        assert mod._jev_risk_tier("some diff") == "high"
+        tier, reason = mod._jev_risk_tier("some diff")
+        assert tier == "high"
+        assert reason == "Jev returned an unrecognized score value"
 
 
 class TestJevRiskTierSuccess:
@@ -136,7 +144,9 @@ class TestJevRiskTierSuccess:
         monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
 
         mod = _load_script()
-        assert mod._jev_risk_tier("some diff") == tier
+        result_tier, reason = mod._jev_risk_tier("some diff")
+        assert result_tier == tier
+        assert reason == f"Jev scored this diff as '{tier}'"
 
 
 class TestResolveMode:
@@ -254,3 +264,49 @@ class TestRecommendModes:
 
         assert result["risk_tier"] == "moderate"
         assert result["recommended_aspects"] == result["candidate_aspects"]
+
+    def test_active_mode_narrows_on_trivial_risk(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setitem(sys.modules, "typesafe_sdk", _make_fake_sdk("trivial"))
+        monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+        monkeypatch.setenv("SEBBY_REVIEW_TRIAGE_MODE", "active")
+
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        repo, base = make_repo(
+            tmp_path,
+            base_files={"README.md": "hello\n"},
+            branch_files={"README.md": "hello world\n\nclass Widget:\n    pass\n"},
+        )
+        mod = _load_script()
+        result = mod.recommend(base, repo)
+
+        assert result["risk_tier"] == "trivial"
+        assert result["recommended_aspects"] == []
+        assert result["candidate_aspects"] != []
+
+    def test_active_mode_keeps_full_set_on_high_risk(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setitem(sys.modules, "typesafe_sdk", _make_fake_sdk("high"))
+        monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+        monkeypatch.setenv("SEBBY_REVIEW_TRIAGE_MODE", "active")
+
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        repo, base = make_repo(
+            tmp_path,
+            base_files={"README.md": "hello\n"},
+            branch_files={"README.md": "hello world\n\nclass Widget:\n    pass\n"},
+        )
+        mod = _load_script()
+        result = mod.recommend(base, repo)
+
+        assert result["risk_tier"] == "high"
+        assert result["recommended_aspects"] == result["candidate_aspects"]
+        assert result["candidate_aspects"] != []

@@ -6,7 +6,7 @@ test_review_triage_jev.py.
 
 from __future__ import annotations
 
-import importlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -128,6 +128,41 @@ class TestSilentFailureHunterTrigger:
         mod = _load_script()
         diff = mod.get_diff_text(base, repo)
         assert mod.silent_failure_hunter_needed(diff) is False
+
+
+class TestDiffTruncationDoesNotHideDetection:
+    """A diff larger than the old default 20000-char cap must not hide a
+    try/except that lands past that cutoff -- detection has to see the
+    full, untruncated diff (recommend() must not feed the capped text into
+    candidate_aspects/silent_failure_hunter_needed)."""
+
+    def test_silent_failure_past_20000_chars_still_detected_via_recommend(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # mode="off" keeps this test hermetic (no Jev/network call) while
+        # still exercising the exact recommend() code path end-to-end.
+        monkeypatch.setenv("SEBBY_REVIEW_TRIAGE_MODE", "off")
+
+        padding = "x = 1\n" * 3000
+        branch_content = padding + "try:\n    risky()\nexcept Exception:\n    pass\n"
+        repo, base = make_repo(
+            tmp_path,
+            base_files={"big.py": ""},
+            branch_files={"big.py": branch_content},
+        )
+        mod = _load_script()
+
+        # Sanity-check the premise: the full diff exceeds the old default
+        # truncation cap, and the try/except lands past that cutoff.
+        full_diff = mod.get_diff_text(base, repo, max_chars=None)
+        assert len(full_diff) > 20000
+        assert full_diff.index("try:") > 20000
+
+        result = mod.recommend(base, repo)
+        assert result["silent_failure_hunter"] is True
+        assert result["reasons"]["silent_failure_hunter"] == (
+            "diff touches error-handling/fallback code"
+        )
 
 
 class TestGitErrorHandling:

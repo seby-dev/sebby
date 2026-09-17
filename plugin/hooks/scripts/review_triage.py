@@ -14,10 +14,12 @@ separately reports (deterministically, never via Jev) whether the diff
 touches error-handling code that `silent-failure-hunter` should see.
 
 If Jev (TypeSafe) is available (TYPESAFE_API_KEY set and typesafe_sdk
-installed), the whole-diff risk score in Task 2 narrows the candidate
-aspects on diffs it confidently calls trivial/low risk. This file's
-`recommend()` is a stub until Task 2: it always reports risk_tier="high"
-and never narrows.
+installed), a whole-diff risk score narrows the candidate aspects on
+diffs it confidently calls trivial/low risk. Detection of candidate
+aspects and of error-handling code always runs against the full,
+untruncated diff; only the text actually sent to Jev is capped, so a
+large diff never hides error-handling code from silent-failure-hunter's
+trigger.
 """
 
 import argparse
@@ -48,29 +50,38 @@ _SILENT_FAILURE_PATTERN = re.compile(
 RISK_TIERS = ("trivial", "low", "moderate", "high")
 NARROW_TIERS = frozenset({"trivial", "low"})
 
+# Cap applied only to the text actually sent to Jev. Detection functions
+# (candidate_aspects, silent_failure_hunter_needed) must see the full,
+# untruncated diff -- this constant stays local to _jev_risk_tier so that
+# cap can never accidentally leak into a detection path.
+_JEV_MAX_CHARS = 20000
 
-def _jev_risk_tier(diff_text: str) -> str:
-    """Return a Jev risk tier for `diff_text`, or "high" if Jev is
-    unavailable.
 
-    Fails open to "high" on any missing SDK, missing API key, unrecognized
-    score value, or SDK/network exception. "high" is the same value used
-    when Jev isn't consulted at all, so there's no separate skip-boolean
-    to get backwards -- "unscored" and "high" are one code path.
+def _jev_risk_tier(diff_text: str) -> tuple[str, str]:
+    """Return (risk_tier, reason) for `diff_text`.
+
+    Fails open to ("high", <reason>) on any missing SDK, missing API key,
+    unrecognized score value, or SDK/network exception. "high" is the same
+    tier value used when Jev isn't consulted at all, so there's no separate
+    skip-boolean to get backwards -- "unscored" and "high" are one code
+    path. The reason string is what tells the two apart: it always names
+    the real cause (missing key, missing SDK, a failed call, an
+    unrecognized score) rather than implying Jev was consulted when it
+    wasn't.
     """
     api_key = os.environ.get("TYPESAFE_API_KEY")
     if not api_key:
-        return "high"
+        return "high", "TYPESAFE_API_KEY is not set"
 
     try:
         from typesafe_sdk import Score, TypeSafeClient  # type: ignore[import]
     except ImportError:
-        return "high"
+        return "high", "typesafe_sdk is not importable"
 
     try:
         client = TypeSafeClient(api_key=api_key, model="jev-latest")
         response = client.system_one(
-            {"diff": diff_text},
+            {"diff": diff_text[:_JEV_MAX_CHARS]},
             {
                 "risk": Score(
                     instructions=(
@@ -84,10 +95,13 @@ def _jev_risk_tier(diff_text: str) -> str:
             },
         )
         tier = response.scores["risk"].score
-        return tier if tier in RISK_TIERS else "high"
+        if tier not in RISK_TIERS:
+            return "high", "Jev returned an unrecognized score value"
+        return tier, f"Jev scored this diff as '{tier}'"
     except Exception:  # noqa: BLE001
-        # Fail open: any network, auth, or SDK error is swallowed silently.
-        return "high"
+        # Fail open: any network, auth, or SDK error is swallowed silently,
+        # but the reason string still records that a call was attempted.
+        return "high", "Jev call failed"
 
 
 def resolve_mode() -> str:
@@ -124,7 +138,11 @@ def get_changed_files(base: str, project_dir: Path) -> list[str]:
     return [line for line in result.stdout.splitlines() if line]
 
 
-def get_diff_text(base: str, project_dir: Path, max_chars: int = 20000) -> str:
+def get_diff_text(base: str, project_dir: Path, max_chars: int | None = 20000) -> str:
+    """Return the diff text for `base...HEAD`. `max_chars=None` returns the
+    full, untruncated diff -- callers doing detection (candidate_aspects,
+    silent_failure_hunter_needed) must pass None so nothing past an
+    arbitrary cutoff goes invisible to them."""
     result = subprocess.run(
         ["git", "diff", f"{base}...HEAD"],
         cwd=project_dir,
@@ -135,7 +153,7 @@ def get_diff_text(base: str, project_dir: Path, max_chars: int = 20000) -> str:
         raise RuntimeError(
             f"git diff failed for base={base} in {project_dir}: {result.stderr.strip()}"
         )
-    return result.stdout[:max_chars]
+    return result.stdout if max_chars is None else result.stdout[:max_chars]
 
 
 def _added_or_removed_body(diff_text: str) -> str:
@@ -169,14 +187,21 @@ def recommend(base: str, project_dir: Path) -> dict:
     """Compute the triage recommendation for the diff between `base` and
     HEAD. Never narrows below `candidate_aspects` unless
     SEBBY_REVIEW_TRIAGE_MODE=active and Jev confidently scores the diff
-    trivial/low risk."""
+    trivial/low risk.
+
+    Detection (candidate_aspects, silent_failure_hunter_needed) always runs
+    against the full, untruncated diff -- only the text handed to Jev is
+    capped, and that cap is applied inside _jev_risk_tier itself."""
     files = get_changed_files(base, project_dir)
-    diff = get_diff_text(base, project_dir)
+    diff = get_diff_text(base, project_dir, max_chars=None)
     candidates = candidate_aspects(files, diff)
     needs_silent_failure_hunter = silent_failure_hunter_needed(diff)
 
     mode = resolve_mode()
-    tier = "high" if mode == "off" else _jev_risk_tier(diff)
+    if mode == "off":
+        tier, tier_reason = "high", "triage mode is 'off'"
+    else:
+        tier, tier_reason = _jev_risk_tier(diff)
 
     would_narrow = tier in NARROW_TIERS
     if mode == "active" and would_narrow:
@@ -191,9 +216,7 @@ def recommend(base: str, project_dir: Path) -> dict:
         "recommended_aspects": sorted(recommended),
         "silent_failure_hunter": needs_silent_failure_hunter,
         "reasons": {
-            "risk_tier": (
-                "triage mode is 'off'" if mode == "off" else f"Jev scored this diff as '{tier}'"
-            ),
+            "risk_tier": tier_reason,
             "silent_failure_hunter": (
                 "diff touches error-handling/fallback code"
                 if needs_silent_failure_hunter
