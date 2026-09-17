@@ -1055,7 +1055,7 @@ Proposed replacement:
 Before shipping, run `/sebby-toolkit:review`. It runs
 `pr-review-toolkit:code-reviewer` and `semgrep` unconditionally, and
 `pr-review-toolkit:silent-failure-hunter` whenever the diff touches
-error-handling or fallback code -- narrowing only `review-pr`'s optional
+error-handling or fallback code — narrowing only `review-pr`'s optional
 tests/types/comments aspects, and only on diffs a Jev risk score
 confidently calls low-risk. It never skips silently: it reports what it
 skipped and why. If the `sebby-toolkit` plugin isn't installed in a given
@@ -1065,10 +1065,10 @@ project, fall back to running `pr-review-toolkit:silent-failure-hunter`,
 Passive (always on, no invocation needed):
 - **`security-guidance`** — injects OWASP-style security reminders automatically each session
 
-New external integrations or auth flows → confirm `semgrep` actually ran
-(part of `/sebby-toolkit:review`'s step 6 — check its output if the
-session shows semgrep wasn't configured; it requires `/setup-semgrep-plugin`
-on first use).
+For new external integrations or auth flows, confirm `semgrep` actually
+ran as part of `/sebby-toolkit:review`'s step six — check its output if
+the session shows semgrep wasn't configured; it requires
+`/setup-semgrep-plugin` on first use.
 ```
 
 - [ ] **Step 2: Apply the edit** (only after explicit user confirmation of Step 1)
