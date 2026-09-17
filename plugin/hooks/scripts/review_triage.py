@@ -25,6 +25,7 @@ import json
 import os
 import re
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 _TEST_FILE_PATTERN = re.compile(
@@ -43,6 +44,70 @@ _SILENT_FAILURE_PATTERN = re.compile(
     r"^\+.*\b(try\s*:|except\b|\.catch\s*\(|rescue\b|panic\s*\(|recover\s*\()",
     re.IGNORECASE | re.MULTILINE,
 )
+
+RISK_TIERS = ("trivial", "low", "moderate", "high")
+NARROW_TIERS = frozenset({"trivial", "low"})
+
+
+def _jev_risk_tier(diff_text: str) -> str:
+    """Return a Jev risk tier for `diff_text`, or "high" if Jev is
+    unavailable.
+
+    Fails open to "high" on any missing SDK, missing API key, unrecognized
+    score value, or SDK/network exception. "high" is the same value used
+    when Jev isn't consulted at all, so there's no separate skip-boolean
+    to get backwards -- "unscored" and "high" are one code path.
+    """
+    api_key = os.environ.get("TYPESAFE_API_KEY")
+    if not api_key:
+        return "high"
+
+    try:
+        from typesafe_sdk import Score, TypeSafeClient  # type: ignore[import]
+    except ImportError:
+        return "high"
+
+    try:
+        client = TypeSafeClient(api_key=api_key, model="jev-latest")
+        response = client.system_one(
+            {"diff": diff_text},
+            {
+                "risk": Score(
+                    instructions=(
+                        "Rate how likely this diff is to introduce a regression "
+                        "or bug that needs careful review, versus being a "
+                        "trivial, low-risk change (docs, formatting, config, "
+                        "comment-only, or a simple rename)."
+                    ),
+                    criteria=list(RISK_TIERS),
+                )
+            },
+        )
+        tier = response.scores["risk"].score
+        return tier if tier in RISK_TIERS else "high"
+    except Exception:  # noqa: BLE001
+        # Fail open: any network, auth, or SDK error is swallowed silently.
+        return "high"
+
+
+def resolve_mode() -> str:
+    mode = os.environ.get("SEBBY_REVIEW_TRIAGE_MODE", "shadow").strip().lower()
+    if mode not in ("off", "shadow", "active"):
+        return "shadow"
+    return mode
+
+
+def log_shadow_decision(entry: dict) -> None:
+    """Append one JSONL entry recording a triage decision. Best-effort --
+    any filesystem error is swallowed, since this is a diagnostic log, not
+    part of the decision path."""
+    log_path = Path.home() / ".claude" / "sebby-triage.jsonl"
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
 
 
 def get_changed_files(base: str, project_dir: Path) -> list[str]:
@@ -101,26 +166,34 @@ def silent_failure_hunter_needed(diff_text: str) -> bool:
 
 
 def recommend(base: str, project_dir: Path) -> dict:
-    """Compute the triage recommendation for the diff between `base` and HEAD.
-
-    This initial version always returns risk_tier="high" and never narrows
-    the candidate aspects -- Task 2 replaces this function's body with real
-    Jev scoring, rollout-mode handling, and shadow-mode logging, keeping this
-    exact signature and return-dict shape.
-    """
+    """Compute the triage recommendation for the diff between `base` and
+    HEAD. Never narrows below `candidate_aspects` unless
+    SEBBY_REVIEW_TRIAGE_MODE=active and Jev confidently scores the diff
+    trivial/low risk."""
     files = get_changed_files(base, project_dir)
     diff = get_diff_text(base, project_dir)
     candidates = candidate_aspects(files, diff)
     needs_silent_failure_hunter = silent_failure_hunter_needed(diff)
 
-    return {
-        "risk_tier": "high",
-        "mode": "active",
+    mode = resolve_mode()
+    tier = "high" if mode == "off" else _jev_risk_tier(diff)
+
+    would_narrow = tier in NARROW_TIERS
+    if mode == "active" and would_narrow:
+        recommended = set()
+    else:
+        recommended = set(candidates)
+
+    result = {
+        "risk_tier": tier,
+        "mode": mode,
         "candidate_aspects": sorted(candidates),
-        "recommended_aspects": sorted(candidates),
+        "recommended_aspects": sorted(recommended),
         "silent_failure_hunter": needs_silent_failure_hunter,
         "reasons": {
-            "risk_tier": "Jev not yet wired in (Task 2)",
+            "risk_tier": (
+                "triage mode is 'off'" if mode == "off" else f"Jev scored this diff as '{tier}'"
+            ),
             "silent_failure_hunter": (
                 "diff touches error-handling/fallback code"
                 if needs_silent_failure_hunter
@@ -128,6 +201,21 @@ def recommend(base: str, project_dir: Path) -> dict:
             ),
         },
     }
+
+    if mode in ("shadow", "active"):
+        log_shadow_decision(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "project_dir": str(project_dir),
+                "mode": mode,
+                "risk_tier": tier,
+                "candidate_aspects": sorted(candidates),
+                "would_recommend": sorted(set() if would_narrow else candidates),
+                "actually_recommended": sorted(recommended),
+            }
+        )
+
+    return result
 
 
 def main() -> None:
