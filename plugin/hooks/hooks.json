@@ -8,6 +8,10 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/block_env_git.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PLUGIN_ROOT/hooks/scripts/semantic_destructive_check.py\""
           }
         ]
       }

@@ -693,7 +693,9 @@ def main() -> None:
         preview = "\n".join(lines[:20])
         if len(lines) > 20:
             preview += f"\n… ({len(lines) - 20} more issues)"
-        print(json.dumps({"systemMessage": f"Lint found issues — fix before committing:\n{preview}"}))
+        print(
+            json.dumps({"systemMessage": f"Lint found issues — fix before committing:\n{preview}"})
+        )
 
 
 if __name__ == "__main__":
