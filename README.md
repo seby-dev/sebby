@@ -121,8 +121,9 @@ Some modules need extra dependencies, installed via `uv add 'sebby[extra-name]'`
 
 ## Claude Code plugin
 
-`plugin/` is a Claude Code plugin (`sebby-toolkit`) bundling hooks, a
-feature-development skill, and a settings.json template — see
+`plugin/` is a Claude Code plugin (`sebby-toolkit`) bundling hooks, two
+skills (`feature` for generalized feature development and `review` for
+Jev-backed PR review triage), and a settings.json template — see
 [`plugin/README.md`](plugin/README.md) for what's included and how to
 install it. `docs/claude-md-snippets.md` has copy-paste CLAUDE.md sections
 for the conventions the plugin's hooks assume.
