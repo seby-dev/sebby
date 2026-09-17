@@ -856,6 +856,14 @@ python3 "$CLAUDE_PLUGIN_ROOT/hooks/scripts/review_triage.py" --base <resolved-re
 Parse the JSON on stdout: `risk_tier`, `mode`, `candidate_aspects`,
 `recommended_aspects`, `silent_failure_hunter` (bool), `reasons`.
 
+**If the command exits non-zero** (bad `--base` ref, git failure, or any
+other error), do not trust a partial or malformed result. Treat this
+exactly like `pr-review-toolkit` being unavailable in step 5: fall back to
+the full review set — dispatch `silent-failure-hunter` unconditionally,
+and pass every candidate aspect to `review-pr` unfiltered — and note the
+triage failure in the final report rather than silently proceeding as if
+it recommended a narrow set.
+
 ### 3. Dispatch code-reviewer (always)
 
 Dispatch `pr-review-toolkit:code-reviewer`. If the plugin isn't installed
