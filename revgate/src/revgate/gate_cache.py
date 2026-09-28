@@ -133,6 +133,10 @@ def run_gate_if_changed(
                 "tree": key.tree,
             }
             atomic_write_text(entry_path, json.dumps(record, sort_keys=True))
+        else:
+            # A failure, such as a --no-cache rerun after a toolchain change, clears the
+            # earlier pass so the next plain run doesn't report it as cached.
+            entry_path.unlink(missing_ok=True)
         append_jsonl_locked(log_path, _log_row(clock(), key, argv, False, code, duration, 0))
         return code
 

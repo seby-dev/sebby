@@ -42,7 +42,8 @@ repository, and `revgate` exits `2` without running it when the repository root 
 The command accepts the following flags:
 
 - `--no-cache`: run the command even on a cache hit, and record a fresh pass if it
-  exits `0`.
+  exits `0`. If it exits non-zero, `revgate` removes the cached pass for that key, so
+  the next plain run runs the command again.
 - `--max-age AGE`: treat an older pass as a miss. `AGE` is a number followed by `s`,
   `m`, `h`, or `d`, for example `24h`. The default is `[gates.cache] max_age` in
   `.review.toml`, or 24 hours.

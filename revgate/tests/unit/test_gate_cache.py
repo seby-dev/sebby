@@ -85,6 +85,22 @@ def test_no_cache_flag_runs_again(git_repo: Path, tmp_path: Path) -> None:
     assert runs(counter) == 2
 
 
+def test_failed_no_cache_run_invalidates_the_pass(git_repo: Path, tmp_path: Path) -> None:
+    flag = tmp_path / "fail"
+    cmd = [
+        sys.executable,
+        "-c",
+        "import pathlib, sys; raise SystemExit(1 if pathlib.Path(sys.argv[1]).exists() else 0)",
+        str(flag),
+    ]
+    assert gate(git_repo, cmd)[0] == 0
+    flag.write_text("")  # something outside the key changed, such as a toolchain
+    assert gate(git_repo, cmd, no_cache=True)[0] == 1
+    code, text = gate(git_repo, cmd)
+    assert code == 1
+    assert "PASS (cached" not in text
+
+
 def test_cwd_is_part_of_the_key(git_repo: Path, tmp_path: Path) -> None:
     (git_repo / "sub").mkdir()
     (git_repo / "sub" / "b.txt").write_text("b\n")
