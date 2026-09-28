@@ -1,8 +1,11 @@
 """`revgate wave`: the W0 integrity checks (the whole of the MVP's wave review).
 
-Every task of the wave needs a controller run file whose head the merged head contains;
-every such run used one `revgate` source hash; no task changed a file it didn't declare
-(lockfiles and ledger assignments aside); and `revgate`'s own source checkout is clean.
+Every task of the wave needs a controller run file whose head the merged head contains,
+that passed (exit 0, nothing incomplete, not provisional) or whose blocking findings a
+ledger ruling explains, and whose head is the task tip that merged (when a merge commit on
+the first-parent line names it); every such run used one `revgate` source hash; no task
+changed a file it didn't declare over its whole merged range (lockfiles and ledger
+assignments aside); and `revgate`'s own source checkout is clean.
 Each violation is one blocking `wave.integrity` finding. W0 checks the pipeline itself,
 not the code, so it blocks even in a project without `.review.toml`.
 """
@@ -26,6 +29,7 @@ from revgate.plan_yaml import PlanYamlError
 from revgate.rules.registry import load_tier_table
 from revgate.store import (
     ledger_assigned,
+    ledger_rulings,
     read_run_file,
     state_dir,
     write_run_file,
@@ -85,6 +89,58 @@ def _controller_run(top: Path, state: Path, task: str, head: str) -> RunFile | N
     return sorted(latest, key=lambda rf: rf.head)[0] if latest else None
 
 
+def _merged_tip(top: Path, base: str, head: str, run_head: str) -> tuple[str, str] | None:
+    """`(fork, tip)` of the task branch that merged: the second parent of the earliest merge
+    on the first-parent line of `base..head` whose branch contains `run_head`, and where
+    that branch left the mainline. None when no merge names it (linear history)."""
+    try:
+        out = gitio.run_git(
+            top, "rev-list", "--first-parent", "--reverse", "--parents", f"{base}..{head}"
+        )
+    except GitError:
+        return None
+    for row in out.decode().split("\n"):
+        parts = row.split()
+        if len(parts) < 3:
+            continue
+        mainline, branch = parts[1], parts[2]
+        try:
+            if gitio.is_ancestor(top, run_head, branch) and not gitio.is_ancestor(
+                top, run_head, mainline
+            ):
+                return gitio.merge_base(top, mainline, branch), branch
+        except GitError:
+            return None
+    return None
+
+
+def _run_problem(state: Path, slug: str, task: str, rf: RunFile) -> str | None:
+    """Why the controller run doesn't clear the task, or None when it does."""
+    if rf.incomplete:
+        return f"is incomplete: {'; '.join(rf.incomplete)}"
+    if rf.provisional:
+        return "is provisional"
+    if rf.exit_code == 0:
+        return None
+    if rf.exit_code == 1:
+        rulings = ledger_rulings(state, slug, task)
+        open_blocking = [
+            f
+            for f in rf.findings
+            if f.tier is Tier.BLOCKING
+            and f.status in ("open", "acknowledged")
+            and (f.rule, f.cluster_key, f.witness_digest) not in rulings
+        ]
+        if not open_blocking:
+            return None
+        first = open_blocking[0]
+        return (
+            f"exited 1 with {len(open_blocking)} blocking finding(s) no ruling explains, "
+            f"first {first.rule} at {first.file}:{first.line}"
+        )
+    return f"exited {rf.exit_code}"
+
+
 def _allowed(path: str, task: BlockTask, assigned: frozenset[str]) -> bool:
     if path in task.owns.all() or path in task.runs or path in assigned:
         return True
@@ -118,8 +174,32 @@ def _task_findings(
                     )
                 )
                 continue
+            problem = _run_problem(state, slug, task.id, rf)
+            if problem is not None:
+                findings.append(
+                    _finding(
+                        plan_path,
+                        f"task {task.id}'s controller run at {rf.head[:7]} {problem}",
+                        f"runs/{task.id}/*.controller.json at {rf.head[:7]}: exit {rf.exit_code}",
+                        f"run-failed:{task.id}",
+                    )
+                )
+            fork, tip = rf.base, rf.head
+            merged = _merged_tip(top, rf.base, head, rf.head)
+            if merged is not None:
+                fork, tip = merged
+                if tip != rf.head:
+                    findings.append(
+                        _finding(
+                            plan_path,
+                            f"task {task.id} merged at {tip[:7]}, but its latest controller "
+                            f"run is at {rf.head[:7]}",
+                            f"controller run head {rf.head[:7]} != merged task tip {tip[:7]}",
+                            f"stale-run:{task.id}",
+                        )
+                    )
             assigned = ledger_assigned(state, slug, task.id)
-            for _letter, path, old in gitio.diff_name_status(top, rf.base, rf.head):
+            for _letter, path, old in gitio.diff_name_status(top, fork, tip):
                 for p in (path, old):
                     if p is None or _allowed(p, task, assigned):
                         continue
@@ -129,7 +209,7 @@ def _task_findings(
                         _finding(
                             p,
                             f"task {task.id} changed {p}, which it doesn't own or run",
-                            f"{rf.base[:7]}..{rf.head[:7]}: {p}; plan owns and runs omit it",
+                            f"{fork[:7]}..{tip[:7]}: {p}; plan owns and runs omit it",
                             f"unowned:{task.id}:{p}",
                         )
                     )
