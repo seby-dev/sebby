@@ -313,3 +313,26 @@ def test_raw_signal_counts_match_the_prototype(make_repo: MakeRepo) -> None:
         "config_touched": 2,
     }
     assert dict(_run(r).raw_counts) == counts
+
+
+def test_a_marker_in_prose_is_not_a_suppression(make_repo: MakeRepo) -> None:
+    # `as any` counts in code only (the spec reads it by AST), and a Python marker only in
+    # a comment: prose in a TypeScript comment or a Python docstring suppresses nothing
+    # (bench case C11's hand judgment found both).
+    r = make_repo(
+        {"web/src/a.ts": "export const a = 1;\n", "src/a.py": "x = 1\n"},
+        {
+            "web/src/a.ts": (
+                "// dropped, same as any other version mismatch\n"
+                'export const a = "cast as any";\n'
+                "export const b = c as any; // as any\n"
+            ),
+            "src/a.py": (
+                'def f():\n    """A `# type: ignore` here would be flagged."""\n    return 1\n'
+            ),
+        },
+    )
+    result = _run(r)
+    assert [(f.rule, f.file, f.line) for f in result.findings] == [
+        ("policy.unjustified_suppression", "web/src/a.ts", 3)
+    ]

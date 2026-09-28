@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import itertools
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from revgate.spi.facts import (
@@ -293,6 +294,29 @@ def _call_use(node: ast.Call, parents: dict[int, ast.AST]) -> CallUse:
     return "other"
 
 
+def _index0_reads(scope: ast.AST) -> dict[str, list[int]]:
+    """Lines of each `name[0]` read in `scope`'s own body, not in nested scopes."""
+    body: list[ast.AST]
+    if isinstance(scope, ast.Lambda):
+        body = [scope.body]
+    elif isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Module):
+        body = list(scope.body)
+    else:
+        body = [scope]
+    out: dict[str, list[int]] = {}
+    for node in _own_nodes(body):
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Load)
+            and isinstance(node.value, ast.Name)
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value == 0
+            and not isinstance(node.slice.value, bool)
+        ):
+            out.setdefault(node.value.id, []).append(node.lineno)
+    return out
+
+
 def _isinstance_test(test: ast.expr) -> tuple[str, tuple[str, ...], bool] | None:
     """`(subject, classes, negated)` when `test` is `[not] isinstance(x, ...)`, or an `and`
     whose first operand is."""
@@ -384,6 +408,91 @@ def _chains(
     return [chain for _line, chain in found]
 
 
+def _module_constants(tree: ast.Module) -> dict[str, ast.List | ast.Tuple]:
+    """Module-level `NAME = [...]` or `NAME = (...)` bindings, by name."""
+    out: dict[str, ast.List | ast.Tuple] = {}
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            target, value = stmt.targets[0], stmt.value
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+            target, value = stmt.target, stmt.value
+        else:
+            continue
+        if isinstance(target, ast.Name) and isinstance(value, ast.List | ast.Tuple):
+            out[target.id] = value
+    return out
+
+
+def _class_entries(const: ast.List | ast.Tuple) -> list[tuple[str, int]]:
+    """A table's class column: each element's first item (or the element itself), as dotted
+    text with its line, when every entry is a dotted name."""
+    out: list[tuple[str, int]] = []
+    for elt in const.elts:
+        head = elt.elts[0] if isinstance(elt, ast.Tuple | ast.List) and elt.elts else elt
+        text = dotted(head)
+        if text is None:
+            return []
+        out.append((text, head.lineno))
+    return out
+
+
+def _dispatch_tables(
+    fn: _DefNode, consts: Mapping[str, ast.List | ast.Tuple]
+) -> dict[str, list[tuple[str, int]]]:
+    """Loop variables bound to a constant table's class column: `for cls, label in TABLE`."""
+    out: dict[str, list[tuple[str, int]]] = {}
+    for node in _own_nodes(fn.body):
+        if not (isinstance(node, ast.For | ast.AsyncFor) and isinstance(node.iter, ast.Name)):
+            continue
+        const = consts.get(node.iter.id)
+        target = node.target
+        first = target.elts[0] if isinstance(target, ast.Tuple) and target.elts else target
+        if const is None or not isinstance(first, ast.Name):
+            continue
+        entries = _class_entries(const)
+        if entries:
+            out[first.id] = entries
+    return out
+
+
+def _expand_chain(
+    chain: IsinstanceChain,
+    tables: Mapping[str, list[tuple[str, int]]],
+    consts: Mapping[str, ast.List | ast.Tuple],
+) -> IsinstanceChain:
+    """A branch on a table's loop variable becomes one branch per entry, in table order,
+    each at its entry's line; a class that names a constant tuple becomes its classes."""
+    branches: list[IsinstanceBranch] = []
+    for b in chain.branches:
+        if len(b.classes) == 1 and b.classes[0] in tables:
+            branches.extend(
+                IsinstanceBranch((cls,), line, b.negated) for cls, line in tables[b.classes[0]]
+            )
+            continue
+        classes: list[str] = []
+        for cls in b.classes:
+            const = consts.get(cls)
+            entries = _class_entries(const) if const is not None else []
+            if entries:
+                classes.extend(text for text, _line in entries)
+            else:
+                classes.append(cls)
+        branches.append(IsinstanceBranch(tuple(classes), b.line, b.negated))
+    return IsinstanceChain(chain.func, chain.subject, tuple(branches), chain.mentioned)
+
+
+def _constant_names(fn: _DefNode, consts: Mapping[str, ast.List | ast.Tuple]) -> Iterator[ast.AST]:
+    """The nodes of every module constant the function reads, so its classes count as
+    mentioned (a guard through `isinstance(x, EXCLUDED)` mentions each excluded class)."""
+    read = {
+        n.id
+        for n in _own_nodes(fn.body)
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in consts
+    }
+    for name in sorted(read):
+        yield from ast.walk(consts[name])
+
+
 def _mentioned(nodes: Iterator[ast.AST]) -> tuple[str, ...]:
     names: set[str] = set()
     for node in nodes:
@@ -462,9 +571,12 @@ class _Visitor(ast.NodeVisitor):
         self.local_types: list[tuple[str, str, str]] = []
         self.field_types: list[tuple[str, str, str]] = []
         self.tree: ast.Module | None = None
+        self._index0_reads: dict[int, dict[str, list[int]]] = {}
+        self.constants: dict[str, ast.List | ast.Tuple] = {}
 
     def run(self, tree: ast.Module) -> None:
         self.tree = tree
+        self.constants = _module_constants(tree)
         for node in ast.walk(tree):
             for child in ast.iter_child_nodes(node):
                 self.parents[id(child)] = node
@@ -657,16 +769,41 @@ class _Visitor(ast.NodeVisitor):
         self._visit_try(node)
 
     # --- expressions
+    def _held_index0(self, node: ast.Call) -> bool:
+        """`name = f(...)` whose enclosing scope later reads `name[0]` (the prototype's
+        consumer idiom: the result is held, then only its first item is read)."""
+        parent = self.parents.get(id(node))
+        if not (
+            isinstance(parent, ast.Assign)
+            and len(parent.targets) == 1
+            and isinstance(parent.targets[0], ast.Name)
+        ):
+            return False
+        name = parent.targets[0].id
+        scope: ast.AST | None = parent
+        while scope is not None and not isinstance(scope, (*_SCOPE_NODES, ast.Module)):
+            scope = self.parents.get(id(scope))
+        if scope is None:
+            return False
+        reads = self._index0_reads.get(id(scope))
+        if reads is None:
+            reads = _index0_reads(scope)
+            self._index0_reads[id(scope)] = reads
+        return any(line >= node.lineno for line in reads.get(name, ()))
+
     def visit_Call(self, node: ast.Call) -> None:
         frame = self._func_frame()
         keywords = tuple(k.arg if k.arg is not None else "**" for k in node.keywords)
+        use = _call_use(node, self.parents)
+        if use == "assigned" and self._held_index0(node):
+            use = "index0"
         frame.calls.append(
             CallSite(
                 caller=frame.qualname,
                 callee=_callee_text(node.func),
                 path=self.path,
                 line=node.lineno,
-                use=_call_use(node, self.parents),
+                use=use,
                 in_try=frame.try_depth > 0,
                 keywords=keywords,
             )
@@ -696,8 +833,14 @@ class _Visitor(ast.NodeVisitor):
             body = node.body
             doc = ast.get_docstring(node, clean=True)
             code = body[1:] if doc is not None else body
-            mentioned = _mentioned(iter(ast.walk(node)))
-            chains.extend(_chains(body, draft.qualname, mentioned))
+            mentioned = _mentioned(
+                itertools.chain(ast.walk(node), _constant_names(node, self.constants))
+            )
+            tables = _dispatch_tables(node, self.constants)
+            chains.extend(
+                _expand_chain(c, tables, self.constants)
+                for c in _chains(body, draft.qualname, mentioned)
+            )
             functions.append(
                 FuncFact(
                     qualname=draft.qualname,

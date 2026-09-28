@@ -284,3 +284,73 @@ def test_load_plan_task_reads_the_wave_base(make_repo: MakeRepo) -> None:
 
 def test_owns_all_is_a_frozenset() -> None:
     assert Owns((), (), ()).all() == frozenset()
+
+
+INDENTED_BODY_PLAN = f"""\
+# Old plan
+
+### Task 1: Wire the helper
+
+**Files:**
+- Modify: `src/pkg/sheet.py`
+
+Replace `layout_cells`' body (everything after its docstring) with:
+
+{FENCE}python
+    grid: list[Cell] = []
+    for n in bar.notes:
+        grid.extend([FILLER] * (cell_steps(n) - 1))
+    relocate_marks(grid)
+    return grid
+{FENCE}
+"""
+
+
+def test_an_indented_body_snippet_gives_its_owners_edges() -> None:
+    # A body fragment indented two levels (a method's or a nested block's) still parses:
+    # the snippet is dedented before it's wrapped, so the owner named in the prose gets
+    # its edges instead of a `plan-snippet-unparsed` note (bench case C2).
+    task = task_from_plan(INDENTED_BODY_PLAN, "docs/plans/old.md", "1")
+    assert task is not None
+    callees = {(e.caller, e.callee) for e in task.call_edges}
+    assert ("layout_cells", "relocate_marks") in callees
+    assert ("layout_cells", "cell_steps") in callees
+    assert not any(n.startswith("plan-snippet-unparsed") for n in task.unverified)
+
+
+LEVEL_TWO_PLAN = f"""\
+# Older plan
+
+## Global constraints
+
+Keep it small.
+
+## Task 1: The store
+
+**Files:**
+- Create: `src/pkg/store.py`
+
+### Steps
+
+{FENCE}python
+def save(page):
+    write_page(page)
+{FENCE}
+
+## Task 2: The route
+
+**Files:**
+- Modify: `src/pkg/app.py`
+"""
+
+
+def test_level_two_task_headings_are_task_sections() -> None:
+    # Some historical plans head each task `## Task N:` with `###` subsections inside it
+    # (bench case C29); the section runs to the next heading of its own level.
+    sections = parse_task_sections(LEVEL_TWO_PLAN)
+    assert list(sections) == ["1", "2"]
+    assert sections["1"].files_create == ("src/pkg/store.py",)
+    assert [b.ref for b in sections["1"].code_blocks] == ["plan:1:code-block:1"]
+    task = task_from_plan(LEVEL_TWO_PLAN, "docs/plans/older.md", "2")
+    assert task is not None
+    assert task.owns.modify == ("src/pkg/app.py",)
