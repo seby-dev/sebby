@@ -14,6 +14,7 @@ import ast
 import dataclasses
 import hashlib
 import re
+import textwrap
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -436,6 +437,9 @@ def _calls(nodes: Sequence[ast.AST]) -> list[str]:
 
 
 def _parse_snippet(text: str) -> tuple[ast.Module, bool] | None:
+    """The snippet as a module, or wrapped in a function when it's a body fragment (a bare
+    `return`, or a body indented to its original depth, which is dedented first)."""
+    text = textwrap.dedent(text)
     try:
         return ast.parse(text), False
     except SyntaxError:

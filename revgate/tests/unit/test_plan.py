@@ -284,3 +284,35 @@ def test_load_plan_task_reads_the_wave_base(make_repo: MakeRepo) -> None:
 
 def test_owns_all_is_a_frozenset() -> None:
     assert Owns((), (), ()).all() == frozenset()
+
+
+INDENTED_BODY_PLAN = f"""\
+# Old plan
+
+### Task 1: Wire the helper
+
+**Files:**
+- Modify: `src/pkg/sheet.py`
+
+Replace `layout_cells`' body (everything after its docstring) with:
+
+{FENCE}python
+    grid: list[Cell] = []
+    for n in bar.notes:
+        grid.extend([FILLER] * (cell_steps(n) - 1))
+    relocate_marks(grid)
+    return grid
+{FENCE}
+"""
+
+
+def test_an_indented_body_snippet_gives_its_owners_edges() -> None:
+    # A body fragment indented two levels (a method's or a nested block's) still parses:
+    # the snippet is dedented before it's wrapped, so the owner named in the prose gets
+    # its edges instead of a `plan-snippet-unparsed` note (bench case C2).
+    task = task_from_plan(INDENTED_BODY_PLAN, "docs/plans/old.md", "1")
+    assert task is not None
+    callees = {(e.caller, e.callee) for e in task.call_edges}
+    assert ("layout_cells", "relocate_marks") in callees
+    assert ("layout_cells", "cell_steps") in callees
+    assert not any(n.startswith("plan-snippet-unparsed") for n in task.unverified)
