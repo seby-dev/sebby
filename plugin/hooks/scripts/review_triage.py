@@ -27,7 +27,7 @@ import json
 import os
 import re
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _TEST_FILE_PATTERN = re.compile(
@@ -228,7 +228,7 @@ def recommend(base: str, project_dir: Path) -> dict:
     if mode in ("shadow", "active"):
         log_shadow_decision(
             {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "project_dir": str(project_dir),
                 "mode": mode,
                 "risk_tier": tier,

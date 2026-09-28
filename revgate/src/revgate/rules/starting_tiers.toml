@@ -1,0 +1,1252 @@
+# Appendix A of the deterministic review algorithm spec, as data.
+# One [[rule]] table per rule id, in the appendix's order. Concrete learned lessons
+# (lesson.<name>) belong to a project's .review.toml, not to this table.
+# tests/unit/test_registry.py keeps this file equal to the appendix.
+
+[[rule]]
+id = "gate.failed"
+stage = "parent"
+langs = ["any"]
+grade = 0
+source = "policy"
+tier = "blocking"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "policy.protected_path"
+stage = "1a"
+langs = ["any"]
+grade = 1
+source = "policy"
+tier = "blocking"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "policy.unjustified_suppression"
+stage = "1a"
+langs = ["py", "ts"]
+grade = 1
+source = "policy"
+tier = "blocking"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "policy.test_disabled.unowned"
+stage = "1a"
+langs = ["py", "ts"]
+grade = 1
+source = "policy"
+tier = "blocking"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "policy.test_disabled.owned"
+stage = "1a"
+langs = ["py", "ts"]
+grade = 1
+source = "policy"
+tier = "advisory"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "policy.test_deleted.unowned"
+stage = "1a"
+langs = ["py", "ts"]
+grade = 1
+source = "policy"
+tier = "blocking"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "policy.test_deleted.owned"
+stage = "1a"
+langs = ["py", "ts"]
+grade = 1
+source = "policy"
+tier = "advisory"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "policy.test_weakened.unowned"
+stage = "1a"
+langs = ["py", "ts"]
+grade = 1
+source = "policy"
+tier = "blocking"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "policy.test_weakened.owned"
+stage = "1a"
+langs = ["py", "ts"]
+grade = 1
+source = "policy"
+tier = "advisory"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "policy.expected_value_chased"
+stage = "1a"
+langs = ["py", "ts"]
+grade = 1
+source = "policy"
+tier = "advisory"
+review = true
+
+[[rule]]
+id = "policy.fixed_by_gaming"
+stage = "1b"
+langs = ["py", "ts"]
+grade = 1
+source = "policy"
+tier = "advisory"
+review = true
+
+[[rule]]
+id = "policy.default_off_tested_point"
+stage = "3"
+langs = ["py"]
+grade = 0
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "config.engines_mismatch"
+stage = "1b"
+langs = ["package manifests", "CI"]
+grade = 1
+source = "generic"
+tier = "advisory"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "plan.file_missing"
+stage = "parent"
+langs = ["any"]
+grade = 1
+source = "declared"
+tier = "advisory"
+review = false
+proven = "measured"
+
+[[rule]]
+id = "plan.file_extra"
+stage = "parent"
+langs = ["any"]
+grade = 1
+source = "declared"
+tier = "advisory"
+review = false
+proven = "measured"
+
+[[rule]]
+id = "plan.symbol_missing"
+stage = "1a"
+langs = ["py", "ts"]
+grade = 1
+source = "declared"
+tier = "advisory"
+review = false
+proven = "measured"
+
+[[rule]]
+id = "plan.signature_mismatch"
+stage = "1a"
+langs = ["py", "ts"]
+grade = 1
+source = "declared"
+tier = "advisory"
+review = false
+proven = "measured"
+
+[[rule]]
+id = "plan.test_missing"
+stage = "1a"
+langs = ["py", "ts"]
+grade = 1
+source = "declared"
+tier = "advisory"
+review = false
+proven = "measured"
+
+[[rule]]
+id = "wiring.unwired_planned_here"
+stage = "1a"
+langs = ["py", "ts"]
+grade = 1
+source = "declared"
+tier = "advisory"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "plan.call_edge_missing"
+stage = "1a"
+langs = ["py"]
+grade = 2
+source = "declared"
+tier = "advisory"
+review = true
+
+[[rule]]
+id = "plan.constraint_match"
+stage = "1b"
+langs = ["py", "ts"]
+grade = 3
+source = "declared"
+tier = "advisory"
+review = true
+
+[[rule]]
+id = "plan.instruction_unmet"
+stage = "1b"
+langs = ["py", "ts"]
+grade = 2
+source = "declared"
+tier = "shadow"
+review = false
+
+[[rule]]
+id = "plan.codeblock_fidelity"
+stage = "1b"
+langs = ["py", "ts"]
+grade = 3
+source = "declared"
+tier = "shadow"
+review = false
+
+[[rule]]
+id = "plan.run_expect_mismatch"
+stage = "2"
+langs = ["py", "ts"]
+grade = 0
+source = "declared"
+tier = "shadow"
+review = false
+
+[[rule]]
+id = "claim.count_mismatch"
+stage = "1b"
+langs = ["any"]
+grade = 1
+source = "generic"
+tier = "advisory"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "claim.check_absent"
+stage = "1b"
+langs = ["py", "ts"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = false
+
+[[rule]]
+id = "contract.cardinality_consumer"
+stage = "1a"
+langs = ["py"]
+grade = 2
+source = "generic"
+tier = "advisory"
+review = true
+proven = "rare"
+
+[[rule]]
+id = "contract.new_raise_unhandled"
+stage = "1b"
+langs = ["py"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "contract.optional_unguarded"
+stage = "1b"
+langs = ["py"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "contract.call_site_not_updated"
+stage = "1b"
+langs = ["py"]
+grade = 1
+source = "generic"
+tier = "shadow"
+review = false
+
+[[rule]]
+id = "contract.relaxation_reader"
+stage = "1b"
+langs = ["py"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "contract.member_consumers"
+stage = "1b"
+langs = ["py", "ts"]
+grade = 3
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "prop.field_propagation"
+stage = "1b"
+langs = ["py"]
+grade = 3
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "contract.default_changed"
+stage = "1b"
+langs = ["py"]
+grade = 4
+source = "generic"
+tier = "shadow"
+review = false
+context = true
+
+[[rule]]
+id = "errors.swallows_bug_signal"
+stage = "1b"
+langs = ["py"]
+grade = 2
+source = "generic"
+tier = "advisory"
+review = true
+proven = "rare"
+
+[[rule]]
+id = "errors.uncaptured_warning"
+stage = "1b"
+langs = ["py"]
+grade = 2
+source = "generic"
+tier = "advisory"
+review = true
+proven = "rare"
+
+[[rule]]
+id = "errors.silent_broad_catch"
+stage = "1b"
+langs = ["py"]
+grade = 2
+source = "generic"
+tier = "advisory"
+review = false
+proven = "rare"
+
+[[rule]]
+id = "errors.logged_not_recorded"
+stage = "1b"
+langs = ["py"]
+grade = 2
+source = "declared"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "errors.broad_try_scope"
+stage = "1b"
+langs = ["py"]
+grade = 3
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "errors.boundary_leak"
+stage = "1b"
+langs = ["py"]
+grade = 3
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "errors.except_type_mismatch"
+stage = "1b"
+langs = ["py"]
+grade = 2
+source = "declared"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "errors.async_blocking"
+stage = "1b"
+langs = ["py"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = false
+
+[[rule]]
+id = "errors.ts_catch_discards"
+stage = "1b"
+langs = ["ts"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "errors.silent_fallthrough"
+stage = "1b"
+langs = ["py"]
+grade = 3
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "ts.number_of_form_string"
+stage = "1b"
+langs = ["ts"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = false
+
+[[rule]]
+id = "ts.storage_unguarded_at_load"
+stage = "1b"
+langs = ["ts"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = false
+
+[[rule]]
+id = "ts.spread_overrides_prop"
+stage = "1b"
+langs = ["ts"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = false
+
+[[rule]]
+id = "ts.dom_id_without_useid"
+stage = "1b"
+langs = ["ts"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = false
+
+[[rule]]
+id = "ts.promise_cache_no_reset"
+stage = "1b"
+langs = ["ts"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = false
+
+[[rule]]
+id = "wiring.unwired_new_symbol"
+stage = "1a"
+langs = ["py", "ts"]
+grade = 1
+source = "generic"
+tier = "advisory"
+review = true
+proven = "rare"
+
+[[rule]]
+id = "wiring.write_only_field"
+stage = "5"
+langs = ["py", "ts"]
+grade = 1
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "closed.dispatch_not_extended"
+stage = "1b"
+langs = ["py", "ts"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "closed.table_missing_members"
+stage = "1b"
+langs = ["py"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = false
+
+[[rule]]
+id = "lib.isinstance_shadowing"
+stage = "1a"
+langs = ["py"]
+grade = 1
+source = "generic"
+tier = "blocking"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "lib.subclass_unhandled"
+stage = "1a"
+langs = ["py"]
+grade = 1
+source = "declared"
+tier = "blocking"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "lib.subclass_unlisted"
+stage = "1a"
+langs = ["py"]
+grade = 3
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "mirror.type_drift"
+stage = "4"
+langs = ["py", "ts"]
+grade = 1
+source = "structural"
+tier = "advisory"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "mirror.form_fields"
+stage = "4"
+langs = ["py", "ts"]
+grade = 1
+source = "structural"
+tier = "advisory"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "mirror.contract_test_failed"
+stage = "4"
+langs = ["py", "ts"]
+grade = 0
+source = "structural"
+tier = "blocking"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "mirror.unpinned_change"
+stage = "4"
+langs = ["py", "ts"]
+grade = 1
+source = "structural"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "mirror.neighbor_divergence"
+stage = "4"
+langs = ["py", "ts"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "declared"
+
+[[rule]]
+id = "fixture.expected_changed"
+stage = "4"
+langs = ["json"]
+grade = 1
+source = "structural"
+tier = "advisory"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "twin.unpinned"
+stage = "4"
+langs = ["py", "ts"]
+grade = 2
+source = "declared"
+tier = "advisory"
+review = true
+
+[[rule]]
+id = "prop.port_divergence"
+stage = "4"
+langs = ["py", "ts"]
+grade = 0
+source = "declared"
+tier = "blocking"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "prompt.example_unparseable"
+stage = "2"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "declared"
+
+[[rule]]
+id = "prompt.closed_set_drift"
+stage = "2"
+langs = ["py"]
+grade = 1
+source = "declared"
+tier = "advisory"
+review = false
+proven = "declared"
+
+[[rule]]
+id = "docs.dangling_code_ref"
+stage = "1a"
+langs = ["py", "ts"]
+grade = 1
+source = "generic"
+tier = "blocking"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "docs.dangling_prose_ref"
+stage = "1b"
+langs = ["docs", "comments"]
+grade = 1
+source = "generic"
+tier = "advisory"
+review = false
+proven = "measured"
+
+[[rule]]
+id = "docs.claim_contradicted"
+stage = "1b"
+langs = ["docs", "comments"]
+grade = 1
+source = "generic"
+tier = "advisory"
+review = false
+proven = "rare"
+
+[[rule]]
+id = "docs.impact_context"
+stage = "1b"
+langs = ["docs"]
+grade = 4
+source = "generic"
+tier = "shadow"
+review = false
+context = true
+
+[[rule]]
+id = "lesson.<id>"
+stage = "4"
+langs = ["py", "ts"]
+grade = 1
+source = "declared"
+tier = "advisory"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "metric.function_length"
+stage = "4"
+langs = ["py", "ts"]
+grade = 1
+source = "declared"
+tier = "advisory"
+review = false
+proven = "measured"
+
+[[rule]]
+id = "metric.file_growth"
+stage = "4"
+langs = ["py", "ts"]
+grade = 1
+source = "declared"
+tier = "advisory"
+review = false
+proven = "measured"
+
+[[rule]]
+id = "distilled.<id>"
+stage = "4"
+langs = ["py", "ts"]
+grade = 2
+source = "distilled"
+tier = "advisory"
+review = true
+proven = "per"
+
+[[rule]]
+id = "family.<id>"
+stage = "4"
+langs = ["py"]
+grade = 1
+source = "declared"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "obligation.docs_branch"
+stage = "7"
+langs = ["docs"]
+grade = 3
+source = "statistical"
+tier = "shadow"
+review = false
+context = true
+
+[[rule]]
+id = "consistency.co_travel"
+stage = "1b"
+langs = ["py"]
+grade = 2
+source = "generic"
+tier = "advisory"
+review = true
+proven = "rare"
+
+[[rule]]
+id = "consistency.new_sibling"
+stage = "1b"
+langs = ["py", "ts"]
+grade = 3
+source = "statistical"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "consistency.systematic_edit"
+stage = "1b"
+langs = ["py"]
+grade = 3
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "test.no_red_test"
+stage = "2"
+langs = ["py", "ts"]
+grade = 0
+source = "policy"
+tier = "blocking"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "test.regression"
+stage = "2"
+langs = ["py", "ts"]
+grade = 0
+source = "generic"
+tier = "blocking"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "test.red_in_preserving_task"
+stage = "2"
+langs = ["py", "ts"]
+grade = 0
+source = "generic"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "test.green_at_base"
+stage = "2"
+langs = ["py", "ts"]
+grade = 0
+source = "generic"
+tier = "shadow"
+review = false
+
+[[rule]]
+id = "test.unpinned_change"
+stage = "2"
+langs = ["py"]
+grade = 0
+source = "generic"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "test.unexercised_change"
+stage = "2"
+langs = ["py"]
+grade = 1
+source = "generic"
+tier = "advisory"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "test.extreme_mutant_survived"
+stage = "2"
+langs = ["py"]
+grade = 0
+source = "generic"
+tier = "advisory"
+review = false
+proven = "witness"
+
+[[rule]]
+id = "test.changed_line_unexecuted"
+stage = "2"
+langs = ["py"]
+grade = 1
+source = "generic"
+tier = "advisory"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "test.decision_unpinned"
+stage = "6"
+langs = ["py", "ts"]
+grade = 0
+source = "generic"
+tier = "advisory"
+review = false
+proven = "witness"
+
+[[rule]]
+id = "verify.domain_unpinned"
+stage = "2"
+langs = ["py"]
+grade = 1
+source = "policy"
+tier = "advisory"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "verify.incomplete"
+stage = "2"
+langs = ["any"]
+grade = 1
+source = "policy"
+tier = "advisory"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "verify.incomplete_blocking"
+stage = "2"
+langs = ["any"]
+grade = 1
+source = "policy"
+tier = "advisory"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "behave.silent_delta"
+stage = "3"
+langs = ["py"]
+grade = 0
+source = "generic"
+tier = "shadow"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "behave.new_exception"
+stage = "3"
+langs = ["py"]
+grade = 0
+source = "generic"
+tier = "shadow"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "behave.amplify_crash"
+stage = "3"
+langs = ["py"]
+grade = 0
+source = "generic"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "behave.amplify_invariant"
+stage = "3"
+langs = ["py"]
+grade = 0
+source = "generic"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "behave.amplify_shape"
+stage = "3"
+langs = ["py"]
+grade = 0
+source = "generic"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "behave.amplify_hang"
+stage = "3"
+langs = ["py"]
+grade = 0
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "behave.invariant_declared"
+stage = "3"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "blocking"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "behave.new_warning"
+stage = "3"
+langs = ["py"]
+grade = 0
+source = "generic"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "prop.roundtrip_newly_lossy"
+stage = "4"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "prop.roundtrip_regression"
+stage = "4"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "prop.new_rejection"
+stage = "4"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "prop.roundtrip_new_field_lossy"
+stage = "4"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "declared"
+
+[[rule]]
+id = "prop.mr_regression"
+stage = "4"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "declared"
+
+[[rule]]
+id = "prop.mr_violation_new"
+stage = "4"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "declared"
+
+[[rule]]
+id = "prop.junk_insensitive"
+stage = "4"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "declared"
+
+[[rule]]
+id = "prop.parity_regression"
+stage = "4"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "declared"
+
+[[rule]]
+id = "prop.parity_new_feature"
+stage = "4"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "declared"
+
+[[rule]]
+id = "prop.reference_divergence"
+stage = "4"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "declared"
+
+[[rule]]
+id = "prop.validator_regression"
+stage = "4"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "wave.probe_more_errors"
+stage = "4"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "wave.integrity"
+stage = "parent"
+langs = ["any"]
+grade = 1
+source = "policy"
+tier = "blocking"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "wave.missing_task"
+stage = "5"
+langs = ["any"]
+grade = 1
+source = "policy"
+tier = "blocking"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "wave.unattributed_commit"
+stage = "5"
+langs = ["any"]
+grade = 1
+source = "policy"
+tier = "advisory"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "wave.verify_step_unrecorded"
+stage = "5"
+langs = ["any"]
+grade = 1
+source = "declared"
+tier = "advisory"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "wave.conflict_resolution"
+stage = "5"
+langs = ["any"]
+grade = 1
+source = "policy"
+tier = "advisory"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "wave.deferred_unmet"
+stage = "5"
+langs = ["py", "ts"]
+grade = 1
+source = "declared"
+tier = "blocking"
+review = true
+proven = "exact"
+
+[[rule]]
+id = "wave.cumulative_limit"
+stage = "5"
+langs = ["any"]
+grade = 1
+source = "declared"
+tier = "advisory"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "wave.merged_test_failure"
+stage = "5"
+langs = ["py", "ts"]
+grade = 0
+source = "generic"
+tier = "blocking"
+review = false
+proven = "exact"
+
+[[rule]]
+id = "wave.probe_emergent"
+stage = "5"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "wave.probe_clobbered"
+stage = "5"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "wave.probe_overlap"
+stage = "5"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "wave.probe_unintended"
+stage = "5"
+langs = ["py"]
+grade = 0
+source = "declared"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "wave.invariant_delta"
+stage = "5"
+langs = ["py"]
+grade = 0
+source = "generic"
+tier = "advisory"
+review = true
+proven = "witness"
+
+[[rule]]
+id = "wave.stale_callee"
+stage = "5"
+langs = ["py", "ts"]
+grade = 3
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "wave.stale_callee_typed"
+stage = "5"
+langs = ["py", "ts"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "wave.interference"
+stage = "5"
+langs = ["py", "ts"]
+grade = 3
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "wave.duplicate_body"
+stage = "5"
+langs = ["py", "ts"]
+grade = 2
+source = "generic"
+tier = "shadow"
+review = true
+
+[[rule]]
+id = "wave.sibling_path_parity"
+stage = "5"
+langs = ["py", "ts"]
+grade = 3
+source = "generic"
+tier = "shadow"
+review = true
