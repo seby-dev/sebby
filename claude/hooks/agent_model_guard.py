@@ -29,6 +29,8 @@ PINNED = frozenset(
         "wave-reviewer-domain",
         "branch-reviewer",
         "reader",
+        "drafter",
+        "researcher",
     }
 )
 MODEL_LINE = re.compile(r"(?m)^model:\s*\S")
@@ -36,7 +38,7 @@ MESSAGE = (
     "This Agent dispatch names neither an agent that pins a model nor an explicit model, "
     "so it inherits this session's model. Pass subagent_type (implementer, "
     "implementer-risky, reader, wave-reviewer, wave-reviewer-domain, branch-reviewer, "
-    "adjudicator, plan-advisor) or an explicit model."
+    "adjudicator, plan-advisor, drafter, researcher) or an explicit model."
 )
 
 

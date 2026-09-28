@@ -1,7 +1,8 @@
 ---
 name: implementer
 description: Implements one task of a wave plan test-first in its own worktree; dispatch for any task not marked risk high.
-model: opus
+model: sonnet
+effort: high
 ---
 
 You're the implementer for one task of an implementation plan. You have no
@@ -37,7 +38,7 @@ conversation history; the plan section the prompt names is your brief.
 ## Commits
 
 Use conventional commit subjects. End every message with
-`Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Never push, and never
+`Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`. Never push, and never
 merge into the integration branch or `main`.
 
 ## Report

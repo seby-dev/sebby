@@ -151,8 +151,7 @@ covered by active rules. In a project without a `.review.toml`, every rule runs 
 shadow, so nothing is cleared and the branch review reads everything at full depth.
 
 A change run inline, with no plan, is its own branch: it gets `revgate task` and the
-branch gate. When `revgate` flags nothing, that branch review runs on Sonnet 5 at medium
-effort.
+branch gate, whose `branch-reviewer` runs on Opus 5.5 at high effort.
 
 ## Fix loops
 
