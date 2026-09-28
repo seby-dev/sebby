@@ -147,6 +147,10 @@ def test_suppression_reason(make_repo: MakeRepo) -> None:
         "x = y  # noqa: BLE001\n": ["policy.unjustified_suppression"],
         "x = y  # noqa: BLE001 -- the test double raises anything\n": [],
         "x = y  # type: ignore[attr-defined] -- mypy can't see the plugin\n": [],
+        "x = y  # type: ignore[assignment]  # shadows tuple.index, deliberately\n": [],
+        "x = y  # pragma: no cover - filesystem race\n": [],
+        "x = y  # type: ignore[assignment]  # noqa: E501\n": ["policy.unjustified_suppression"],
+        "x = y  # noqa: E402-\n": ["policy.unjustified_suppression"],
     }
     for line, expected in cases.items():
         r = make_repo(base, {"src/a.py": line})

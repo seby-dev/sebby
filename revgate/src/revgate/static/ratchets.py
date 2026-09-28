@@ -431,7 +431,10 @@ def _protected_findings(
 
 _PY_SUPPRESSION_RE = re.compile(r"#\s*noqa\b|#\s*type:\s*ignore\b|#\s*pragma:\s*no\s*cover")
 _TS_SUPPRESSION_RE = re.compile(r"eslint-disable|@ts-expect-error|@ts-ignore|\bas any\b")
-_REASON_RE = re.compile(r"(?:--|—)\s*\w")
+# A reason after the marker: `-- why`, `— why`, a spaced `- why` (`# pragma: no cover -
+# filesystem race`), or a second comment that isn't itself a marker (`# type:
+# ignore[assignment]  # shadows tuple.index`). A bare error code is never a reason.
+_REASON_RE = re.compile(r"(?:--|—|\s-\s|#(?!\s*(?:noqa\b|type:\s*ignore\b|pragma:)))\s*[A-Za-z]")
 
 
 def _suppression_re(path: str) -> re.Pattern[str] | None:
