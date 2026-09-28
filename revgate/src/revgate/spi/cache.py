@@ -19,7 +19,7 @@ from pathlib import Path
 
 # Bump when any fact dataclass in `revgate.spi.facts` changes shape or meaning, or when the
 # indexer starts recording different facts for the same source.
-FACTS_VERSION = "2"
+FACTS_VERSION = "3"
 
 _KEY_RE = re.compile(r"^[0-9A-Za-z_-]+$")
 _SALT_UNSAFE = re.compile(r"[^0-9A-Za-z_.:+-]")

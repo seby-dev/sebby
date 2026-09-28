@@ -90,6 +90,7 @@ class _Branch:
     line: int
     negated: bool
     classes: tuple[str, ...]  # resolved, canonical for library classes
+    guarded: bool = False  # an `isinstance(...) and ...` test: it shadows no later branch
 
 
 def _resolve(index: TreeIndex, libs: _Libraries, module: str, text: str) -> str | None:
@@ -137,7 +138,9 @@ def _branches(
     out: list[_Branch] = []
     for b in chain.branches:
         resolved = (_resolve(index, libs, module, text) for text in b.classes)
-        out.append(_Branch(b.line, b.negated, tuple(r for r in resolved if r is not None)))
+        out.append(
+            _Branch(b.line, b.negated, tuple(r for r in resolved if r is not None), b.guarded)
+        )
     return out
 
 
@@ -171,7 +174,8 @@ def _shadowing(
                     fix=f"test {sub} before {sup}",
                 )
             )
-        earlier.extend(branch.classes)
+        if not branch.guarded:
+            earlier.extend(branch.classes)
     return out
 
 

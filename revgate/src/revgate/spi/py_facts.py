@@ -317,12 +317,14 @@ def _index0_reads(scope: ast.AST) -> dict[str, list[int]]:
     return out
 
 
-def _isinstance_test(test: ast.expr) -> tuple[str, tuple[str, ...], bool] | None:
-    """`(subject, classes, negated)` when `test` is `[not] isinstance(x, ...)`, or an `and`
-    whose first operand is."""
+def _isinstance_test(test: ast.expr) -> tuple[str, tuple[str, ...], bool, bool] | None:
+    """`(subject, classes, negated, guarded)` when `test` is `[not] isinstance(x, ...)`, or an
+    `and` whose first operand is (then `guarded`, since the other operands can make it
+    false for an instance of `classes`)."""
     node: ast.expr = test
+    guarded = False
     if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And):
-        node = node.values[0]
+        node, guarded = node.values[0], True
     negated = False
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
         negated, node = True, node.operand
@@ -336,7 +338,7 @@ def _isinstance_test(test: ast.expr) -> tuple[str, tuple[str, ...], bool] | None
         target = node.args[1]
         elts = target.elts if isinstance(target, ast.Tuple) else [target]
         classes = tuple(dotted(e) or ast.unparse(e) for e in elts)
-        return ast.unparse(node.args[0]), classes, negated
+        return ast.unparse(node.args[0]), classes, negated, guarded
     return None
 
 
@@ -388,7 +390,7 @@ def _chains(
                     if not _exits_early(cur):
                         break
                     seen.add(id(cur))
-                    branches.append(IsinstanceBranch(t[1], cur.lineno, t[2]))
+                    branches.append(IsinstanceBranch(t[1], cur.lineno, t[2], t[3]))
                     j += 1
                 i = j
             else:
@@ -398,7 +400,7 @@ def _chains(
                     if t is None or t[0] != subject:
                         break
                     seen.add(id(cur_if))
-                    branches.append(IsinstanceBranch(t[1], cur_if.test.lineno, t[2]))
+                    branches.append(IsinstanceBranch(t[1], cur_if.test.lineno, t[2], t[3]))
                     nxt = cur_if.orelse
                     cur_if = nxt[0] if len(nxt) == 1 and isinstance(nxt[0], ast.If) else None
                 i += 1
@@ -466,7 +468,8 @@ def _expand_chain(
     for b in chain.branches:
         if len(b.classes) == 1 and b.classes[0] in tables:
             branches.extend(
-                IsinstanceBranch((cls,), line, b.negated) for cls, line in tables[b.classes[0]]
+                IsinstanceBranch((cls,), line, b.negated, b.guarded)
+                for cls, line in tables[b.classes[0]]
             )
             continue
         classes: list[str] = []
@@ -477,7 +480,7 @@ def _expand_chain(
                 classes.extend(text for text, _line in entries)
             else:
                 classes.append(cls)
-        branches.append(IsinstanceBranch(tuple(classes), b.line, b.negated))
+        branches.append(IsinstanceBranch(tuple(classes), b.line, b.negated, b.guarded))
     return IsinstanceChain(chain.func, chain.subject, tuple(branches), chain.mentioned)
 
 

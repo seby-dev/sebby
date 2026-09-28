@@ -109,6 +109,38 @@ def test_isinstance_shadowing_with_early_returns(make_repo: MakeRepo, tmp_path: 
     assert [(f.rule, f.line) for f in found] == [("lib.isinstance_shadowing", 7)]
 
 
+@pytest.mark.parametrize("second", ["elif", "if"])
+def test_a_guarded_isinstance_branch_shadows_nothing(
+    make_repo: MakeRepo, tmp_path: Path, second: str
+) -> None:
+    # `isinstance(x, Base) and x.flag` is false for a Sub whose flag is false, so the Sub
+    # branch after it still runs, in the elif form and in the early-exit form alike.
+    head = (
+        "from pkg.shapes import Base, Sub\n\n\ndef kind(x):\n"
+        '    if isinstance(x, Base) and x.flag:\n        return "flagged"\n'
+        f'    {second} isinstance(x, Sub):\n        return "sub"\n'
+        '    return "none"\n'
+    )
+    base = {"pkg/__init__.py": "", "pkg/shapes.py": SHAPES, "pkg/use.py": USE_BASE}
+    repo = make_repo(base, {"pkg/use.py": head})
+    assert _run(_ctx(repo, tmp_path)) == ([], [])
+
+
+def test_a_guarded_branch_is_still_shadowed_by_an_earlier_plain_one(
+    make_repo: MakeRepo, tmp_path: Path
+) -> None:
+    head = (
+        "from pkg.shapes import Base, Sub\n\n\ndef kind(x):\n"
+        '    if isinstance(x, Base):\n        return "base"\n'
+        '    elif isinstance(x, Sub) and x.flag:\n        return "sub"\n'
+        '    return "none"\n'
+    )
+    base = {"pkg/__init__.py": "", "pkg/shapes.py": SHAPES, "pkg/use.py": USE_BASE}
+    repo = make_repo(base, {"pkg/use.py": head})
+    found, _ = _run(_ctx(repo, tmp_path))
+    assert [(f.rule, f.line) for f in found] == [("lib.isinstance_shadowing", 7)]
+
+
 def test_baseline_differencing(make_repo: MakeRepo, tmp_path: Path) -> None:
     edited = SHADOWED.replace('return "none"', 'return "neither"')
     base = {"pkg/__init__.py": "", "pkg/shapes.py": SHAPES, "pkg/use.py": SHADOWED}
