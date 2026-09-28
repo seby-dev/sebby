@@ -34,10 +34,13 @@ location.
 
 Pass a typed agent (from `~/.claude/agents/`) or an explicit `model` on every
 dispatch, because a subagent with neither inherits the session's model.
-Read-only agents run on Sonnet 5. Spec and plan advisors run on Opus 5.5 as
-fresh subagents with no conversation history. A project's own `CLAUDE.md` can
-override either rule. For every role's agent and model, see the role table in
-the skill's "Model selection" section.
+Read-only agents run on Sonnet 5, except three review roles that run on Opus 5.5:
+the spec and plan advisor (a fresh subagent with no conversation history), the
+wave reviewer with a `risk: high` task in focus (`wave-reviewer-domain`), and the
+branch reviewer. Dispatch those three by their typed agent without a `model`
+override. A project's own `CLAUDE.md` can override a row only by naming it; a
+blanket rule about read-only agents doesn't move these three. For every role's
+agent and model, see the role table in the skill's "Model selection" section.
 
 ## Review and security
 
