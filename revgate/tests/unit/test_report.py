@@ -27,8 +27,8 @@ Wired `render_page` into the sheet. `ignored_here` isn't disclosed.
 
 ## Deviations
 
-- Kept `relocate_end_attached_marks` in src/x.py instead of moving it.
-- Called `pkg.sheet.bar_cells()` directly; see `web/src/grid.ts:12`.
+- Kept `move_trailing_items` in src/x.py instead of moving it.
+- Called `pkg.rows.build_rows()` directly; see `web/src/grid.ts:12`.
 
 ### Detail under the deviation
 
@@ -53,10 +53,10 @@ not an id: fixed
 
 def test_disclosures_come_from_deviation_and_concern_sections() -> None:
     model = parse_report(REPORT, "r.md")
-    assert "relocate_end_attached_marks" in model.disclosed
+    assert "move_trailing_items" in model.disclosed
     assert "src/x.py" in model.disclosed
-    assert "pkg.sheet.bar_cells" in model.disclosed
-    assert "bar_cells" in model.disclosed
+    assert "pkg.rows.build_rows" in model.disclosed
+    assert "build_rows" in model.disclosed
     assert "web/src/grid.ts" in model.disclosed
     # A deeper heading stays inside the deviation section.
     assert "helper_fn" in model.disclosed

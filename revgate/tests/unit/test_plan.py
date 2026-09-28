@@ -22,7 +22,7 @@ FENCE = "```"
 PLAN = f"""\
 # Demo plan
 
-**Goal:** Move the marks to the end of each bar.
+**Goal:** Move the items to the end of each row.
 
 {FENCE}yaml plan-waves
 forbidden: [tests/frozen.py]
@@ -68,8 +68,8 @@ waves:
 - Test: `tests/test_marks.py`
 
 **Interfaces:**
-- Produces: `def quarter_cell_steps(slot: Slot, qi: int) -> int` and
-  `marks.relocate(x: Bar, *, strict: bool = False) -> Bar`.
+- Produces: `def cell_steps(cell: Cell, index: int) -> int` and
+  `marks.move_item(x: Row, *, strict: bool = False) -> Row`.
 - Consumes `callers("pkg.a.f")` from the index.
 
 **Context:** read `sheet.py`.
@@ -77,14 +77,14 @@ waves:
 - [ ] **Step 1: Test.**
 
 {FENCE}python
-def test_relocates_marks():
-    assert relocate(1) == 1
+def test_moves_items():
+    assert move_item(1) == 1
 {FENCE}
 
-Replace `bar_cells`' body:
+Replace `build_rows`' body:
 
 {FENCE}python
-cells = relocate(x)
+cells = move_item(x)
 return cells
 {FENCE}
 
@@ -111,7 +111,7 @@ test('keeps the grid', () => {{}});
 
 {FENCE}python
 def handle(req):
-    return quarter_cell_steps(req, 0) + finalize(req)
+    return cell_steps(req, 0) + finalize(req)
 {FENCE}
 
 Then in the prose, with no owner named:
@@ -190,11 +190,11 @@ def test_parse_task_sections() -> None:
     assert t1.files_create == ("src/pkg/marks.py",)
     assert t1.files_modify == ("src/pkg/sheet.py",)
     assert t1.files_test == ("tests/test_marks.py",)
-    assert "quarter_cell_steps" in t1.interfaces_text
+    assert "cell_steps" in t1.interfaces_text
     assert "**Context:**" not in t1.interfaces_text
     assert [b.lang for b in t1.code_blocks] == ["python", "python"]
     assert t1.code_blocks[1].ref == "plan:T1:code-block:2"
-    assert "Replace `bar_cells`' body:" in t1.code_blocks[1].preceding_prose
+    assert "Replace `build_rows`' body:" in t1.code_blocks[1].preceding_prose
     # T3's section stops at the next `## ` heading.
     assert "Follow-up" not in sections["T3"].section_text
 
@@ -205,27 +205,27 @@ def test_task_from_plan_with_block() -> None:
     assert task.block_present
     assert task.owns.modify == ("src/pkg/sheet.py",)
     assert task.forbidden == ("tests/frozen.py", "docs/plans/demo.md")
-    assert task.goal == "Move the marks to the end of each bar."
+    assert task.goal == "Move the items to the end of each row."
     assert task.risk == "low" and task.estimate_min == 30
-    assert PlanEdge("bar_cells", "relocate", "plan:T1:code-block:2") in task.call_edges
-    assert PlanEdge("test_relocates_marks", "relocate", "plan:T1:code-block:1") in task.call_edges
-    assert "test_relocates_marks" in task.tests
+    assert PlanEdge("build_rows", "move_item", "plan:T1:code-block:2") in task.call_edges
+    assert PlanEdge("test_moves_items", "move_item", "plan:T1:code-block:1") in task.call_edges
+    assert "test_moves_items" in task.tests
     sigs = {s.name: s for s in task.signatures}
-    steps = sigs["quarter_cell_steps"]
-    assert steps.params == ("slot", "qi")
+    steps = sigs["cell_steps"]
+    assert steps.params == ("cell", "index")
     assert steps.defaults == (None, None)
     assert steps.returns == "int"
-    relocate = sigs["marks.relocate"]
-    assert relocate.params == ("x", "strict")
-    assert relocate.defaults == (None, "False")
+    move_item = sigs["marks.move_item"]
+    assert move_item.params == ("x", "strict")
+    assert move_item.defaults == (None, "False")
     assert "callers" not in sigs  # a call in prose isn't a signature
     # Ownership across the plan.
     assert task.owners["src/pkg/sheet.py"] == ("T1", "T3")
     # T3's own files are later; sheet.py is T1's own file too, so it isn't "later".
     assert task.later_owners == {"src/pkg/api.py": "T3", "tests/test_api.py": "T3"}
-    # T3's code calls finalize and quarter_cell_steps; T1's code calls neither.
+    # T3's code calls finalize and cell_steps; T1's code calls neither.
     assert task.later_edges["finalize"] == "T3"
-    assert "relocate" not in task.later_edges
+    assert "move_item" not in task.later_edges
     # T2 is concurrent (same sub-wave), not later: its callee isn't a later edge.
     assert "draw_marks" not in task.later_edges
 

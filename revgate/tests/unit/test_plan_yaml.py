@@ -24,7 +24,7 @@ waves:
             risk: high
             depends_on: []
             owns: {modify: [web/src/review/grid.ts], test: [web/src/review/grid.test.ts]}
-            context: [docs/reference/solfa-grammar.md#rhythm]
+            context: [docs/reference/grammar.md#rhythm]
       - id: W1b
         tasks:
           - id: T3
@@ -63,7 +63,7 @@ def test_appendix_h_block_parses() -> None:
         "modify": ["web/src/review/grid.ts"],
         "test": ["web/src/review/grid.test.ts"],
     }
-    assert tasks[1]["context"] == ["docs/reference/solfa-grammar.md#rhythm"]
+    assert tasks[1]["context"] == ["docs/reference/grammar.md#rhythm"]
     # The trailing comment is dropped, not kept as part of the value.
     assert tasks[2]["runs"] == ["tests/test_api_extract.py"]
     assert tasks[2]["depends_on"] == ["T1"]
