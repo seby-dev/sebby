@@ -383,3 +383,37 @@ def test_an_owned_corpus_gives_the_ratchets_the_same_ownership(
     result = _one(tmp_path, body, data)
     assert result.passed, result.details
     assert result.details[0] == "commits 1, blocking 0"
+
+
+def _crash(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(self: object, ctx: object) -> object:
+        raise RuntimeError("rule exploded")
+
+    monkeypatch.setattr("revgate.static.docs_refs.DanglingCodeRefRule.check", boom)
+
+
+def test_a_silent_replay_fails_when_its_rule_crashed(
+    make_repo: MakeRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = make_repo(BASE, {"pkg/util.py": UTIL_BASE + "\n"})
+    silent = '[[silent]]\nrule = "docs.*"\n'
+    _case(tmp_path / "cases", "T1", _task_case(repo, silent))
+    _crash(monkeypatch)
+    result = _run(tmp_path / "cases", tmp_path)
+    assert not result.passed
+    assert any("crashed" in d and "rule exploded" in d for d in result.details), result.details
+
+
+def test_a_corpus_fails_when_a_rule_crashed(
+    make_repo: MakeRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = make_repo(BASE, {"pkg/util.py": UTIL_BASE + "\n"})
+    data = _data(tmp_path, {"commits.txt": f"{repo.head}\n"})
+    body = (
+        f'id = "C10"\nstage = "1a"\ntier = "fast"\nkind = "corpus"\nrepo = "{repo.path}"\n'
+        'commits_file = "inputs/commits.txt"\n[[silent]]\nrule = "docs.dangling_code_ref"\n'
+    )
+    _crash(monkeypatch)
+    result = _one(tmp_path, body, data)
+    assert not result.passed
+    assert any("crashed" in d for d in result.details), result.details

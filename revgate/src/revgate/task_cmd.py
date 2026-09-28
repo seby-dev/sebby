@@ -117,6 +117,9 @@ class StaticPhase:
     rule_seconds: Mapping[str, float]
     rule_errors: Mapping[str, str]
     checks: int
+    # The ids of every rule that crashed or that the budget skipped: none of their
+    # findings can be in `outputs`, so an absent finding of theirs means nothing.
+    unrun: frozenset[str] = frozenset()
 
 
 _NO_RATCHET = RatchetResult(
@@ -162,10 +165,12 @@ def run_static_phase(
     errors: dict[str, str] = {}
     total = 0.0
     checks = 0
+    unrun: set[str] = set()
     for rule in rules:
         name = all_rules.rule_name(rule)
         if total > cfg.rules_seconds:
             notes.append(f"skipped: budget:{name}")
+            unrun |= rule.ids
             continue
         start = time.monotonic()
         produced: list[RuleOutput] = []
@@ -178,6 +183,7 @@ def run_static_phase(
         except Exception as exc:  # one rule's crash never ends the run (A6)
             incomplete.append(f"internal:{name}")
             errors[name] = f"{type(exc).__name__}: {exc}"
+            unrun |= rule.ids
             produced = []
         elapsed = time.monotonic() - start
         total += elapsed
@@ -195,6 +201,7 @@ def run_static_phase(
         rule_seconds=seconds,
         rule_errors=errors,
         checks=checks,
+        unrun=frozenset(unrun),
     )
 
 
@@ -209,9 +216,11 @@ def review_static(
     scope: TaskScope,
     cache: BlobCache,
     overrides: Mapping[str, bytes | None] | None = None,
-) -> tuple[list[RuleOutput], StaticCtx, RatchetResult]:
-    """The static phase alone: no preflight, no gates, no run cache (for bench and recheck)."""
-    phase = run_static_phase(
+) -> StaticPhase:
+    """The static phase alone: no preflight, no gates, no run cache (for bench and recheck).
+    Callers read `unrun`, `rule_errors`, and `budget_notes`: a crashed or skipped rule's
+    silence isn't evidence."""
+    return run_static_phase(
         repo,
         base,
         head,
@@ -222,7 +231,6 @@ def review_static(
         cache=cache,
         overrides=overrides,
     )
-    return list(phase.outputs), phase.ctx, phase.ratchet
 
 
 # --- serialization of the cached part of a run ------------------------------------------------
