@@ -182,10 +182,16 @@ one `adjudicator`. It rules once on every open blocking finding of that task and
 each ruling:
 
 ```
-revgate mark <id> tp|fp --ruling --note "<reason>"
+revgate mark <id> tp|fp --ruling --plan <plan> --note "<reason>"
 ```
 
-A ruling is a justified suppression, a plan ruling, or a ruling for the wave reviewer to
+`--plan` names the plan whose ledger the ruling lands in; without it the command exits
+2 and records nothing. An `fp` ruling explains the finding on the controller's next run,
+so the adjudicator doesn't add a suppression comment (`revgate` reads no
+`revgate-ignore` marker). If a ruling does change a file, the adjudicator commits it
+before replying, because `revgate task` exits 2 on uncommitted changes.
+
+A ruling is a false positive, a plan ruling, or a ruling for the wave reviewer to
 confirm, which sets the task's `focus`. If a task has more than five blocking findings
 after its first round, don't adjudicate: the controller takes the task back as likely
 mis-scoped and fixes the plan or re-splits the task.
