@@ -17,7 +17,10 @@ from revgate.spi.facts import TsFileFacts
 def _find_lib() -> Path | None:
     candidates = [
         os.environ.get("REVGATE_TEST_TSLIB"),
-        str(Path.home() / "Developer/staff2solfa/web/node_modules/typescript"),
+        *(
+            str(p)
+            for p in sorted((Path.home() / "Developer").glob("*/web/node_modules/typescript"))
+        ),
     ]
     for c in candidates:
         if c and (Path(c) / "package.json").is_file():
