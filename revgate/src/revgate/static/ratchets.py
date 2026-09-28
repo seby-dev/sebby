@@ -10,8 +10,10 @@ stay private to it.
 from __future__ import annotations
 
 import ast
+import io
 import os
 import re
+import tokenize
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -440,6 +442,49 @@ def _suppression_re(path: str) -> re.Pattern[str] | None:
     return None
 
 
+_TS_STRING_RE = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"|`(?:[^`\\]|\\.)*`")
+
+
+def _py_comment_columns(text: str | None) -> dict[int, int] | None:
+    """Each line's comment start column, or None when the file doesn't tokenize (then
+    every marker counts, as before)."""
+    if text is None:
+        return None
+    out: dict[int, int] = {}
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.COMMENT:
+                out[tok.start[0]] = tok.start[1]
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    return out
+
+
+def _ts_code_end(line: str) -> int:
+    """Where a TypeScript line's code ends: at a `//` comment outside a string."""
+    blanked = _TS_STRING_RE.sub(lambda m: " " * len(m.group(0)), line)
+    cut = blanked.find("//")
+    return len(line) if cut < 0 else cut
+
+
+def _real_markers(
+    path: str, line: str, markers: list[re.Match[str]], comment_col: int | None, parsed: bool
+) -> list[re.Match[str]]:
+    """The markers that suppress something: a Python marker in a comment, and `as any` in
+    TypeScript code (the other TypeScript markers are comment directives already)."""
+    if path.endswith(_PY_EXT):
+        if not parsed:
+            return markers
+        return [m for m in markers if comment_col is not None and m.start() >= comment_col]
+    end = _ts_code_end(line)
+    blanked = _TS_STRING_RE.sub(lambda m: " " * len(m.group(0)), line)
+    return [
+        m
+        for m in markers
+        if not m.group(0).startswith("as") or (m.start() < end and blanked[m.start()] == "a")
+    ]
+
+
 def _suppression_findings(
     trees: _Trees,
     changes: list[tuple[str, str, str | None]],
@@ -456,12 +501,20 @@ def _suppression_findings(
             for line in _lines(trees.fork(old or path) if letter != "A" else None)
             if pattern.search(line)
         )
-        tip_lines = _lines(trees.tip(path))
+        tip_text = trees.tip(path)
+        tip_lines = _lines(tip_text)
+        columns = _py_comment_columns(tip_text) if path.endswith(_PY_EXT) else None
         for n in sorted(_added_lines(head_hunks[path])):
             if n > len(tip_lines):
                 continue
             line = tip_lines[n - 1]
-            markers = list(pattern.finditer(line))
+            markers = _real_markers(
+                path,
+                line,
+                list(pattern.finditer(line)),
+                columns.get(n) if columns is not None else None,
+                columns is not None,
+            )
             if not markers:
                 continue
             if existing[line.strip()] > 0:
