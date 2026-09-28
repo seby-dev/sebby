@@ -4,3 +4,4 @@ pre-push:
 	uv run ruff format --check .
 	uv run mypy src
 	uv run pytest
+	$(MAKE) -C revgate check
