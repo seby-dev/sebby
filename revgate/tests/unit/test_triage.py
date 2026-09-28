@@ -127,11 +127,62 @@ def test_cluster_keeps_the_strongest_and_lists_the_rest() -> None:
     strong = _finding("wiring.unwired_planned_here", symbol="f", impact="minor")
     stronger = _finding("plan.symbol_missing", symbol="f", impact="critical")
     elsewhere = _finding("plan.symbol_missing", symbol="g")
-    heads = cluster([weak, strong, stronger, elsewhere])
+    heads, absorbed = cluster([weak, strong, stronger, elsewhere])
     assert len(heads) == 2
     head_f = next(h for h in heads if h.symbol == "f")
     assert head_f.rule == "plan.symbol_missing" and head_f.impact == "critical"
     assert head_f.also == ("plan.call_edge_missing", "wiring.unwired_planned_here")
+    assert sorted(f.rule for f in absorbed) == [
+        "plan.call_edge_missing",
+        "wiring.unwired_planned_here",
+    ]
+    assert {f.status for f in absorbed} == {"clustered"}
+    assert {f.absorbed_by for f in absorbed} == {head_f.id}
+
+
+def test_cluster_never_merges_two_findings_of_one_rule() -> None:
+    first = _finding("wiring.unwired_planned_here", symbol="f", evidence="a")
+    second = _finding("wiring.unwired_planned_here", symbol="f", evidence="b")
+    heads, absorbed = cluster([first, second])
+    assert sorted(h.id for h in heads) == sorted([first.id, second.id])
+    assert absorbed == []
+
+
+def _suppression(line: int) -> Finding:
+    return new_finding(
+        "policy.unjustified_suppression",
+        file="src/a.py",
+        line=line,
+        message="m",
+        evidence=f"line {line}",
+        grade=Grade.E1_EXACT,
+        source=Source.POLICY,
+    )
+
+
+def test_decide_keeps_every_blocking_finding_near_one_anchor() -> None:
+    # Three bare suppressions within 25 lines share an anchor; each is its own fix round,
+    # so each stays a blocking finding of its own.
+    v = decide(
+        [_suppression(5), _suppression(6), _suppression(7)],
+        scope=SCOPE,
+        tiers=load_tier_table(),
+        cfg=_cfg(),
+        disclosed=frozenset(),
+        responses={},
+        rulings=NO_RULINGS,
+        focus_inputs=QUIET,
+    )
+    assert [f.line for f in v.blocking()] == [5, 6, 7]
+
+
+def test_decide_keeps_an_absorbed_finding_with_a_pointer() -> None:
+    weak = _finding("plan.call_edge_missing", symbol="f", grade=Grade.E2_STRUCTURAL)
+    strong = _finding("plan.symbol_missing", symbol="f", impact="critical")
+    out = _decide([weak, strong])
+    absorbed = [f for f in out if f.status == "clustered"]
+    assert [f.rule for f in absorbed] == ["plan.call_edge_missing"]
+    assert absorbed[0].absorbed_by == next(f.id for f in out if f.status != "clustered")
 
 
 def test_decide_never_hides_a_blocking_finding_behind_a_stronger_one() -> None:
