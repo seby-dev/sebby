@@ -8,9 +8,14 @@ kept in the repository whose history the cases replay). Each has an `id`, a `sta
   seed file that replaces a path at head), each with `[[expect]]` findings that must
   fire, `[[silent]]` rules that mustn't, and `[[deferred]]` obligations that must exist.
 - `corpus`: every commit in a list against its first parent, with rules that must stay
-  silent; the blocking findings are listed for hand judgment.
+  silent; with `owned = true`, each commit owns the files it changed.
 - `ratchet_corpus`: the G11 ratchets' raw signal counts against a recorded table.
 - `plan_edges`: plan tasks whose planned call edges never landed; nothing may block.
+
+In `corpus` and `plan_edges` cases, every blocking finding fails the case unless an
+`[[accepted_blocking]]` entry (`at`, `rule`, `file`, `line`, `judgment`, `reason`) records
+its hand judgment as true. An entry judged false still fails the case, and so does an
+entry that no longer matches a finding, so the judged list can't go stale.
 - `perf`: the static phase's cold and warm timings, and its determinism.
 - `delivery`: delivered recall on a normalized findings list.
 
@@ -420,6 +425,85 @@ def _silent_matches(s: Silent, f: Finding) -> bool:
     return s.contains is None or s.contains in f.message
 
 
+@dataclass(frozen=True)
+class Accepted:
+    """One hand-judged blocking finding: `at` is a prefix of the replayed commit or tip."""
+
+    at: str
+    rule: str
+    file: str
+    line: int
+    judgment: str
+    reason: str
+
+
+def _accepted(case: Case) -> tuple[Accepted, ...]:
+    where = str(case.path)
+    out: list[Accepted] = []
+    for t in _tables(case.fields, "accepted_blocking", where):
+        line = t.get("line")
+        judgment = _str(t, "judgment", where)
+        if not isinstance(line, int) or judgment not in ("true", "false"):
+            raise CaseError(
+                f"{where}: accepted_blocking needs an integer `line` and a "
+                "`judgment` of true or false"
+            )
+        out.append(
+            Accepted(
+                at=_str(t, "at", where),
+                rule=_str(t, "rule", where),
+                file=_str(t, "file", where),
+                line=line,
+                judgment=judgment,
+                reason=_str(t, "reason", where),
+            )
+        )
+    return tuple(out)
+
+
+class _Judge:
+    """Sorts a case's blocking findings against its `[[accepted_blocking]]` entries."""
+
+    def __init__(self, accepted: tuple[Accepted, ...]) -> None:
+        self.accepted = accepted
+        self.used: set[Accepted] = set()
+        self.problems: list[str] = []
+        self.judged: list[str] = []
+
+    def blocking(self, rev: str, label: str, f: Finding) -> None:
+        match = next(
+            (
+                a
+                for a in self.accepted
+                if rev.startswith(a.at)
+                and a.rule == f.rule
+                and a.file == f.file
+                and a.line == f.line
+            ),
+            None,
+        )
+        if match is None:
+            self.problems.append(f"! {label}: unjudged blocking {_describe(f)}")
+            return
+        self.used.add(match)
+        if match.judgment == "false":
+            self.problems.append(f"! {label}: false block {_describe(f)} ({match.reason})")
+        else:
+            self.judged.append(f"{label}: blocking, judged true ({match.reason}) {_describe(f)}")
+
+    def stale(self) -> list[str]:
+        return [
+            f"! accepted_blocking matched nothing: {a.at[:9]} {a.file}:{a.line} {a.rule}"
+            for a in self.accepted
+            if a not in self.used
+        ]
+
+
+def _changed_files(repo: Path, base: str, head: str) -> frozenset[str]:
+    out = gitio.run_git(repo, "diff", "--name-only", "-z", "--no-ext-diff", base, head)
+    return frozenset(os.fsdecode(p) for p in out.split(b"\0") if p)
+
+
 def _expect_text(e: Expect) -> str:
     optional = {
         "symbol": e.symbol,
@@ -530,19 +614,28 @@ def _silents(case: Case) -> tuple[Silent, ...]:
 def _run_corpus(case: Case, env: _Env, cache: BlobCache) -> tuple[bool, list[str]]:
     silents = _silents(case)
     commits = _corpus_commits(case, env)
+    # `owned = true`: each commit owns the files it changed, as a controller run of a task
+    # whose plan names them would, so the rules that block only in owned files can block.
+    owned = case.fields.get("owned", False) is True
+    judge = _Judge(_accepted(case))
     problems: list[str] = []
-    blocking: list[str] = []
+    count = 0
     for commit in commits:
         base = _first_parent(case.repo, commit)
         if base is None:
             continue
-        review = _review(env, case.repo, base, commit, config_rev=case.config_rev, cache=cache)
+        owns = _changed_files(case.repo, base, commit) if owned else frozenset()
+        review = _review(
+            env, case.repo, base, commit, config_rev=case.config_rev, cache=cache, owns=owns
+        )
         for f in review.findings:
             if any(_silent_matches(s, f) for s in silents):
                 problems.append(f"! not silent at {commit[:9]}: {_describe(f)}")
             if f.tier is Tier.BLOCKING:
-                blocking.append(f"blocking at {commit[:9]}: {_describe(f)}")
-    details = [f"commits {len(commits)}, blocking {len(blocking)}", *problems, *blocking]
+                count += 1
+                judge.blocking(commit, f"at {commit[:9]}", f)
+    problems += judge.problems + judge.stale()
+    details = [f"commits {len(commits)}, blocking {count}", *problems, *judge.judged]
     return not problems, details
 
 
@@ -645,12 +738,9 @@ def _run_plan_edges(case: Case, env: _Env, cache: BlobCache) -> tuple[bool, list
         (str(t["plan"]), str(t["task"])): str(t.get("reason", ""))
         for t in _tables(case.fields, "skipped", where)
     }
-    # `blocking_rules`: the rule families whose blocking findings fail the case; any other
-    # blocking finding is listed for hand judgment. Without it, every one fails the case.
-    counted = _strs(case.fields, "blocking_rules", where)
+    judge = _Judge(_accepted(case))
     problems: list[str] = []
     notes: list[str] = []
-    others: list[str] = []
     evaluated = skipped = 0
     for key, entries in wanted.items():
         plan_path, task = key
@@ -682,10 +772,7 @@ def _run_plan_edges(case: Case, env: _Env, cache: BlobCache) -> tuple[bool, list
         label = f"{plan_path.rsplit('/', 1)[-1]} Task {task} {base[:9]}..{tip[:9]}"
         for f in review.findings:
             if f.tier is Tier.BLOCKING:
-                if not counted or any(_rule_matches(r, f.rule) for r in counted):
-                    problems.append(f"! {label}: blocking {_describe(f)}")
-                else:
-                    others.append(f"{label}: other blocking (hand judgment) {_describe(f)}")
+                judge.blocking(tip, label, f)
             if f.rule == "plan.call_edge_missing" and (
                 f.tier is not Tier.ADVISORY or f.grade is not Grade.E2_STRUCTURAL
             ):
@@ -697,8 +784,9 @@ def _run_plan_edges(case: Case, env: _Env, cache: BlobCache) -> tuple[bool, list
         edges_here = ", ".join(sorted({f"{e['caller']}->{e['callee']}" for e in entries}))
         found = sorted({f.rule for f in review.findings if f.tier is not Tier.SHADOW})
         notes.append(f"{label}: edges {edges_here}; rules {', '.join(found) or 'none'}")
+    problems += judge.problems + judge.stale()
     head = f"evaluated {evaluated}/{len(wanted)} tasks, skipped {skipped}"
-    return not problems, [head, *problems, *others, *notes]
+    return not problems, [head, *problems, *judge.judged, *notes]
 
 
 def _percentile(values: Sequence[float], q: float) -> float:

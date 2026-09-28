@@ -311,3 +311,54 @@ def test_delivery_matches_by_file_symbol_and_category(make_repo: MakeRepo, tmp_p
         "FRR_delivered_task 0.000 (none); FRR_delivered_any 0.857 (D#1)"
     )
     assert result_line(result) == "FAIL delivery: D#1 didn't reach the implementer"
+
+
+def _owned_corpus(make_repo: MakeRepo, tmp_path: Path, accepted: str) -> CaseResult:
+    # The head commit removes `helper` and edits the script that imports it, so with
+    # `owned = true` the script is owned and its dangling reference blocks.
+    repo = make_repo(
+        BASE,
+        {"pkg/util.py": UTIL_HEAD, "scripts/x.py": SCRIPT + "# still calls helper\n"},
+        review_toml="",
+    )
+    data = _data(tmp_path, {"commits.txt": f"{repo.head}\n"})
+    body = (
+        f'id = "C10"\nstage = "1a"\ntier = "fast"\nkind = "corpus"\nrepo = "{repo.path}"\n'
+        'commits_file = "inputs/commits.txt"\nowned = true\n'
+        + accepted.replace("HEAD", repo.head[:12])
+    )
+    return _one(tmp_path, body, data)
+
+
+def _entry(judgment: str, line: int = 1) -> str:
+    return (
+        '[[accepted_blocking]]\nat = "HEAD"\nrule = "docs.dangling_code_ref"\n'
+        f'file = "scripts/x.py"\nline = {line}\njudgment = "{judgment}"\nreason = "r"\n'
+    )
+
+
+def test_an_owned_corpus_fails_on_an_unjudged_blocking_finding(
+    make_repo: MakeRepo, tmp_path: Path
+) -> None:
+    result = _owned_corpus(make_repo, tmp_path, "")
+    assert not result.passed
+    assert result.details[0] == "commits 1, blocking 1"
+    assert any("unjudged blocking" in d and "scripts/x.py:1" in d for d in result.details)
+
+
+def test_a_blocking_finding_judged_true_passes(make_repo: MakeRepo, tmp_path: Path) -> None:
+    result = _owned_corpus(make_repo, tmp_path, _entry("true"))
+    assert result.passed, result.details
+    assert any("judged true" in d for d in result.details)
+
+
+def test_a_blocking_finding_judged_false_fails(make_repo: MakeRepo, tmp_path: Path) -> None:
+    result = _owned_corpus(make_repo, tmp_path, _entry("false"))
+    assert not result.passed
+    assert any("false block" in d for d in result.details)
+
+
+def test_an_accepted_entry_that_matches_nothing_fails(make_repo: MakeRepo, tmp_path: Path) -> None:
+    result = _owned_corpus(make_repo, tmp_path, _entry("true") + _entry("true", line=40))
+    assert not result.passed
+    assert any("matched nothing" in d and "scripts/x.py:40" in d for d in result.details)
