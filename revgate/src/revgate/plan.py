@@ -27,7 +27,7 @@ KINDS = frozenset({"feat", "fix", "refactor", "perf", "test", "docs"})
 
 _FENCE_RE = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*)$")
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-_TASK_HEADING_RE = re.compile(r"^###\s+Task\s+([A-Za-z]*\d+[A-Za-z0-9.-]*)\s*[:.—-]\s*(.*)$")
+_TASK_HEADING_RE = re.compile(r"^#{2,3}\s+Task\s+([A-Za-z]*\d+[A-Za-z0-9.-]*)\s*[:.—-]\s*(.*)$")
 _FILES_RE = re.compile(r"^\s*[-*]\s+(?:\*\*)?(Create|Modify|Test)(?:\*\*)?:(?:\*\*)?\s*(.*)$")
 _BACKTICK_RE = re.compile(r"`([^`\n]+)`")
 _LINE_RANGE_RE = re.compile(r":\d+(?:\s*[-–]\s*\d+)?$")
@@ -365,15 +365,17 @@ def _interfaces_text(doc: Markdown, start: int, end: int) -> str:
 
 
 def parse_task_sections(md: str) -> dict[str, ProseTask]:
-    """Every `### Task <id>` section, keyed by id; a repeated id keeps its first section."""
+    """Every `### Task <id>` section (or `## Task <id>`, as some older plans head them),
+    keyed by id; a repeated id keeps its first section. A section runs to the next heading
+    of its own level or higher."""
     doc = scan_markdown(md)
     headings = doc.headings()
     out: dict[str, ProseTask] = {}
     for n, (start, level, _text) in enumerate(headings):
         m = _TASK_HEADING_RE.match(doc.lines[start])
-        if level != 3 or not m or m.group(1) in out:
+        if level not in (2, 3) or not m or m.group(1) in out:
             continue
-        end = next((i for i, lvl, _t in headings[n + 1 :] if lvl <= 3), len(doc.lines))
+        end = next((i for i, lvl, _t in headings[n + 1 :] if lvl <= level), len(doc.lines))
         tid = m.group(1)
         files: dict[str, list[str]] = {"Create": [], "Modify": [], "Test": []}
         for i in range(start + 1, end):

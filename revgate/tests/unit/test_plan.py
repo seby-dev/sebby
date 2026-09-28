@@ -316,3 +316,41 @@ def test_an_indented_body_snippet_gives_its_owners_edges() -> None:
     assert ("layout_cells", "relocate_marks") in callees
     assert ("layout_cells", "cell_steps") in callees
     assert not any(n.startswith("plan-snippet-unparsed") for n in task.unverified)
+
+
+LEVEL_TWO_PLAN = f"""\
+# Older plan
+
+## Global constraints
+
+Keep it small.
+
+## Task 1: The store
+
+**Files:**
+- Create: `src/pkg/store.py`
+
+### Steps
+
+{FENCE}python
+def save(page):
+    write_page(page)
+{FENCE}
+
+## Task 2: The route
+
+**Files:**
+- Modify: `src/pkg/app.py`
+"""
+
+
+def test_level_two_task_headings_are_task_sections() -> None:
+    # Some historical plans head each task `## Task N:` with `###` subsections inside it
+    # (bench case C29); the section runs to the next heading of its own level.
+    sections = parse_task_sections(LEVEL_TWO_PLAN)
+    assert list(sections) == ["1", "2"]
+    assert sections["1"].files_create == ("src/pkg/store.py",)
+    assert [b.ref for b in sections["1"].code_blocks] == ["plan:1:code-block:1"]
+    task = task_from_plan(LEVEL_TWO_PLAN, "docs/plans/older.md", "2")
+    assert task is not None
+    assert task.owns.modify == ("src/pkg/app.py",)
