@@ -96,6 +96,16 @@ def build_parser() -> argparse.ArgumentParser:
     mk.add_argument("--labeler", default=None, help="default: $USER")
     _add_repo(mk)
 
+    bench = sub.add_parser("bench", help="replay the benchmark cases against the static rules")
+    bench.add_argument("--stage", default="1a", help="the stage whose cases run (default 1a)")
+    bench.add_argument("--tier", choices=("fast", "full"), default="fast", help="full adds slow")
+    bench.add_argument("--case", action="append", default=None, metavar="ID", help="only these")
+    bench.add_argument("--data", type=Path, default=None, help="the benchmark data directory")
+    bench.add_argument("--cases", type=Path, default=None, help="default: .revgate/bench/cases")
+    bench.add_argument("--write-baseline", action="store_true", help="record the results")
+    bench.add_argument("--verbose", action="store_true", help="print every case's details")
+    _add_repo(bench)
+
     label = sub.add_parser("label", help="list unlabeled findings, or print rule precision")
     group = label.add_mutually_exclusive_group()
     group.add_argument("--list", type=int, default=None, metavar="N", help="default 20")
@@ -258,6 +268,20 @@ def _dispatch(args: argparse.Namespace, out: TextIO) -> int:
         return _mark(args, out)
     if command == "label":
         return _label(args, out)
+    if command == "bench":
+        from revgate.bench.runner import run_bench
+
+        return run_bench(
+            args.stage,
+            args.tier,
+            args.case,
+            write_baseline=args.write_baseline,
+            data=args.data,
+            cases=args.cases,
+            repo=_repo(args.repo),
+            out=out,
+            verbose=args.verbose,
+        )
     return 2
 
 
