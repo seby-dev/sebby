@@ -13,6 +13,7 @@ import fcntl
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -20,7 +21,7 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TextIO
+from typing import Literal, TextIO
 
 from revgate import __version__
 from revgate.config import ConfigError, GateCacheConfig, load_gate_cache_config
@@ -124,21 +125,131 @@ def run_gate_if_changed(
         start = time.monotonic()
         code = _execute(argv, cwd, err)
         duration = time.monotonic() - start
-        if code == 0:
-            record = {
-                "argv": list(argv),
-                "cwd": key.cwd_rel,
-                "duration_s": duration,
-                "passed_at": clock(),
-                "tree": key.tree,
-            }
-            atomic_write_text(entry_path, json.dumps(record, sort_keys=True))
-        else:
-            # A failure, such as a --no-cache rerun after a toolchain change, clears the
-            # earlier pass so the next plain run doesn't report it as cached.
-            entry_path.unlink(missing_ok=True)
+        _store(entry_path, key, argv, code == 0, duration, clock())
         append_jsonl_locked(log_path, _log_row(clock(), key, argv, False, code, duration, 0))
         return code
+
+
+def _store(
+    entry_path: Path, key: GateKey, argv: Sequence[str], passed: bool, duration: float, now: float
+) -> None:
+    if passed:
+        record = {
+            "argv": list(argv),
+            "cwd": key.cwd_rel,
+            "duration_s": duration,
+            "passed_at": now,
+            "tree": key.tree,
+        }
+        atomic_write_text(entry_path, json.dumps(record, sort_keys=True))
+    else:
+        # A failure, such as a --no-cache rerun after a toolchain change, clears the
+        # earlier pass so the next plain run doesn't report it as cached.
+        entry_path.unlink(missing_ok=True)
+
+
+GateStatus = Literal["passed", "failed", "cached", "timeout", "couldnt_run"]
+
+# How long to wait for a killed process group's pipe to drain before giving up on it.
+_DRAIN_S = 5
+
+
+@dataclass(frozen=True)
+class GateRun:
+    """One captured gate command: `exit` is None when it timed out or couldn't start."""
+
+    status: GateStatus
+    exit: int | None
+    output: str
+    duration_s: float
+
+
+def _capture(argv: Sequence[str], cwd: Path, timeout_s: int) -> GateRun:
+    """Run `argv` in its own process group with stdout and stderr combined.
+
+    A timeout kills the whole group, so a grandchild holding the pipe can't outlive it.
+    """
+    start = time.monotonic()
+    try:
+        proc = subprocess.Popen(
+            list(argv),
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    except (FileNotFoundError, PermissionError, NotADirectoryError) as exc:
+        msg = f"gate-if-changed: couldn't run {argv[0]!r}: {exc}\n"
+        return GateRun("couldnt_run", None, msg, time.monotonic() - start)
+    try:
+        raw, _ = proc.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        _kill_group(proc.pid)
+        try:
+            raw, _ = proc.communicate(timeout=_DRAIN_S)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            raw = b""
+        text = raw.decode("utf-8", errors="replace")
+        text += f"\ngate-if-changed: timed out after {timeout_s} s; killed\n"
+        return GateRun("timeout", None, text, time.monotonic() - start)
+    code = proc.returncode
+    text = raw.decode("utf-8", errors="replace")
+    return GateRun("passed" if code == 0 else "failed", code, text, time.monotonic() - start)
+
+
+def _kill_group(pid: int) -> None:
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def run_gate_capture(
+    argv: Sequence[str],
+    *,
+    cwd: Path,
+    timeout_s: int,
+    max_age_s: int | None = None,
+    no_cache: bool = False,
+    clock: Callable[[], float] = time.time,
+) -> GateRun:
+    """`run_gate_if_changed` for `revgate task`: same key, entries, lock, and log.
+
+    Returns the combined output instead of streaming it. Only a pass is cached; a failure,
+    a timeout, or a command that couldn't start clears any earlier pass for the key.
+    """
+    if not argv:
+        return GateRun("couldnt_run", None, "gate-if-changed: empty command\n", 0.0)
+    if toplevel(cwd) is None:
+        return _capture(argv, cwd, timeout_s)
+    try:
+        top = safe_toplevel(cwd)
+    except SafetyError as exc:
+        return GateRun("couldnt_run", None, f"gate-if-changed: {exc}\n", 0.0)
+    try:
+        cfg = load_gate_cache_config(top)
+    except ConfigError:
+        cfg = GateCacheConfig()
+    max_age = cfg.max_age_s if max_age_s is None else max_age_s
+    state = state_dir(top)
+    key = gate_key(argv, top, cwd, cfg.env_allowlist, state / "scratch")
+    entry_path = state / "gate" / f"{key.digest}.json"
+    log_path = state / "gate" / "runs.jsonl"
+    with _locked(state / "gate" / f"{key.digest}.lock"):
+        entry = None if no_cache else _read_entry(entry_path)
+        if entry is not None and clock() - entry[0] <= max_age:
+            saved = round(entry[1])
+            stamp = time.strftime("%H:%M", time.localtime(entry[0]))
+            line = f"gate-if-changed: PASS (cached {stamp}, tree {key.tree[:7]}, saved {saved} s)\n"
+            append_jsonl_locked(log_path, _log_row(clock(), key, argv, True, 0, 0.0, saved))
+            return GateRun("cached", 0, line, 0.0)
+        run = _capture(argv, cwd, timeout_s)
+        _store(entry_path, key, argv, run.status == "passed", run.duration_s, clock())
+        code = run.exit if run.exit is not None else -1
+        append_jsonl_locked(log_path, _log_row(clock(), key, argv, False, code, run.duration_s, 0))
+        return run
 
 
 def _read_entry(path: Path) -> tuple[float, float] | None:
