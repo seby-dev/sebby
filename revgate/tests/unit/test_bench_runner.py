@@ -362,3 +362,24 @@ def test_an_accepted_entry_that_matches_nothing_fails(make_repo: MakeRepo, tmp_p
     result = _owned_corpus(make_repo, tmp_path, _entry("true") + _entry("true", line=40))
     assert not result.passed
     assert any("matched nothing" in d and "scripts/x.py:40" in d for d in result.details)
+
+
+def test_an_owned_corpus_gives_the_ratchets_the_same_ownership(
+    make_repo: MakeRepo, tmp_path: Path
+) -> None:
+    # A deleted test in a file the commit owns is policy.test_deleted.owned (advisory),
+    # not the unowned rule that blocks.
+    two = "def test_a():\n    assert 1\n\n\ndef test_b():\n    assert 2\n"
+    repo = make_repo(
+        {"tests/test_x.py": two},
+        {"tests/test_x.py": "def test_a():\n    assert 1\n"},
+        review_toml="",
+    )
+    data = _data(tmp_path, {"commits.txt": f"{repo.head}\n"})
+    body = (
+        f'id = "C10"\nstage = "1a"\ntier = "fast"\nkind = "corpus"\nrepo = "{repo.path}"\n'
+        'commits_file = "inputs/commits.txt"\nowned = true\n'
+    )
+    result = _one(tmp_path, body, data)
+    assert result.passed, result.details
+    assert result.details[0] == "commits 1, blocking 0"

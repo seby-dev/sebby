@@ -48,7 +48,9 @@ class RatchetRule:
             ctx.fork,
             ctx.tip,
             cfg=ctx.cfg,
-            plan_owns=plan.owns.all() if plan is not None else frozenset(),
+            # The task scope's owns is the plan's in every command; a bench replay with no
+            # plan gives a scope of its own, and the ratchets read ownership from it too.
+            plan_owns=(plan.owns.all() if plan is not None else frozenset()) | ctx.scope.owns,
             plan_text=plan.section_text if plan is not None else "",
             plan_path=plan.plan_path if plan is not None else None,
         )
