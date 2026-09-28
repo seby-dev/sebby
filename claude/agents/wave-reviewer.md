@@ -1,8 +1,8 @@
 ---
 name: wave-reviewer
 description: Answers a wave's focus-packet obligations CONFIRMED, REFUTED, or UNSURE with file-and-line evidence; dispatch for a wave's focused review.
-model: sonnet
-effort: medium
+model: opus
+effort: high
 tools: Read, Grep, Glob, Bash, Skill
 ---
 

@@ -2,7 +2,7 @@
 name: reader
 description: Read-only exploration that finds files, symbols, and line ranges and reports them; dispatch for any lookup that edits nothing.
 model: sonnet
-effort: low
+effort: medium
 tools: Read, Grep, Glob, Bash
 ---
 

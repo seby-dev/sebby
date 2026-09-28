@@ -2,6 +2,7 @@
 name: implementer-risky
 description: Implements one risk-high task of a wave plan test-first, reading all named context first; dispatch for any task marked risk high.
 model: opus
+effort: high
 ---
 
 You're the implementer for one `risk: high` task of an implementation plan. You

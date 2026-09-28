@@ -49,13 +49,13 @@ much as a large one.
 | Stage | What happens | Skill / mechanism | Model |
 |---|---|---|---|
 | 0. Isolate | Confirm you're in the right repo before anything else: `git rev-parse --show-toplevel` must match the intended project directory under `~/Developer/` (never `~/Documents/Dev/` or another path) — if it prints `/Users/sebby` (home) instead, stop, a stray `~/.git` is catching this command. Then set up a temporary, disposable **per-feature** worktree — never implement directly in a shared environment worktree (e.g. `.worktrees/dev`). See Worktree Isolation below. Use `git init` only inside an already-confirmed project directory, never from `$HOME`. | git, superpowers:using-git-worktrees | any |
-| 1. Brainstorm + spec | Explore intent, requirements, approach with the user; produce a spec. Before scanning the codebase from scratch, check for a reference doc set (commonly `docs/reference/` with an index file); its index points at the relevant subsystem file(s) | superpowers:brainstorming | any |
+| 1. Brainstorm + spec | Explore intent, requirements, approach with the user; produce a spec. The session holds the conversation with the user; a `drafter` agent writes the spec document from the agreed design. Before scanning the codebase from scratch, check for a reference doc set (commonly `docs/reference/` with an index file); its index points at the relevant subsystem file(s) | superpowers:brainstorming, `drafter` agent | Sonnet 5.5 drafter |
 | 2. Spec review | Fresh advisor subagent reviews the spec — not as an implementer. Point it explicitly at relevant existing files/docs (a prompt with no codebase pointers gives plausible-but-locally-blind advice), **including a `docs/reference/`-style index file if the repo has one** | `plan-advisor` agent | **Opus 5.5 (required)** |
 | 3. Fold + approve | Merge advisor findings into the spec, applying judgment where the advisor is wrong. Put a wall-clock estimate in front of the user with the spec, computed by the duration rule in Plan format. If it comes to more than a day, propose shippable slices the user can approve and merge one at a time instead of one approval for everything. **User approves the spec here — this is the only human gate in the pipeline.** | user | — |
-| 4. Plan | Convert the approved spec into waves, sub-waves, and tasks, with the `plan-waves` block, every task's `risk` and `estimate_min`, and the duration table; see Plan format. Runs immediately, no separate confirmation. | superpowers:writing-plans | any |
+| 4. Plan | Convert the approved spec into waves, sub-waves, and tasks, with the `plan-waves` block, every task's `risk` and `estimate_min`, and the duration table; see Plan format. Runs immediately, no separate confirmation. | superpowers:writing-plans, `drafter` agent | Sonnet 5.5 drafter |
 | 4a. Plan lint | `revgate plan-lint <plan>`. The author fixes every error, at most three rounds; if errors remain, stop and report to the user, since the approved spec may be wrong. | `revgate` | none |
 | 5. Plan review | A **fresh** advisor (not the one that wrote the plan), given the lint report, reviews the plan against the spec: task-decomposition completeness, missing edge cases, each task's `risk`, and whether each task is unambiguous enough for a subagent with zero conversation history. Findings are folded in automatically — no user checkpoint. | `plan-advisor` agent | **Opus 5.5 (required)** |
-| 6. Implement | Per-task loop: the implementer works test-first and commits; in a repo without `.review.toml`, it runs the repo's own targeted gates (lint, type-check, and tests for the touched files); then it runs `revgate task`. Dispatch `implementer` or `implementer-risky` by the task's `risk`, in parallel up to the caps in Throughput and verification. An implementer never runs the full suite or the end-to-end suite. No LLM reviews a single task; see Review. A small, well-scoped change with no plan runs inline as its own branch. If the repo has a `docs/reference/`-style doc set, name the subsystem file(s) relevant to each task in its brief | superpowers:subagent-driven-development, superpowers:test-driven-development, `revgate task` | Opus 5.5 implementer |
+| 6. Implement | Per-task loop: the implementer works test-first and commits; in a repo without `.review.toml`, it runs the repo's own targeted gates (lint, type-check, and tests for the touched files); then it runs `revgate task`. Dispatch `implementer` or `implementer-risky` by the task's `risk`, in parallel up to the caps in Throughput and verification. An implementer never runs the full suite or the end-to-end suite. No LLM reviews a single task; see Review. A small, well-scoped change with no plan runs inline as its own branch. If the repo has a `docs/reference/`-style doc set, name the subsystem file(s) relevant to each task in its brief | superpowers:subagent-driven-development, superpowers:test-driven-development, `revgate task` | see Model selection |
 | 7a. Wave gate | When the wave's last task lands: `revgate wave`, then the full gate through `gate-if-changed` in one reusable gate worktree, end-to-end tests in one browser only when the wave touched `[e2e].web_paths`, then a focused LLM review of flagged and `risk: high` tasks only. See `wave-execution.md`. | `revgate wave`, `gate-if-changed`, `wave-reviewer` or `wave-reviewer-domain` | see Model selection |
 | 7b. Branch gate | Before merge: one whole-branch review from `revgate map`, `silent-failure-hunter`, and the `semgrep` CLI, plus the full cross-browser end-to-end run once | `revgate map`, `branch-reviewer`, pr-review-toolkit:silent-failure-hunter, `semgrep` | see Model selection |
 | 8. Ship | From inside the temporary feature worktree: commit, then merge that branch back into the shared dev/integration worktree (if the repo has one), or into `main` where the repo's convention merges locally. **Pushing waits for the user's explicit go-ahead**; after it, push from the shared worktree (never straight from the temp worktree) and follow the global `CLAUDE.md`'s Git and PR steps. A repo whose CI runs on dispatch only gets no CI run from the push. After a dev push, check whether the repo serves a built frontend/static-asset bundle whose output directory is gitignored (a `package.json` with a `build` script feeding a directory the app serves — e.g. a dashboard's `dist/`): a `git push` never regenerates it, so run that build in the dev worktree and restart whatever serves the output. If this feature added a schema migration, apply it to the dev environment's own database **before anything restarts into the new code** — a `git push` never runs migrations, and dev is the one environment nothing migrates automatically (environment-promotion's A5 migrates staging, not dev). Compare the migration tool's current revision against its head (e.g. `alembic current` vs `alembic heads`) and upgrade if they differ. No PR here — promoting past dev is a separate, later decision; see environment-promotion, which also removes the temporary worktree once this feature reaches staging. Before the merge-back, ask with this implementation's own full context: "Was there a genuine wrong assumption, a surprising cross-subsystem interaction, or a false lead that cost real investigation time?" If yes, write one entry in `docs/reference/14-experience-log.md` in its existing format; if no — the common case — write nothing. This never blocks the merge-back. | git (+ the repo's frontend build command, if any) | any |
@@ -99,8 +99,8 @@ Appendix H of the pipeline design spec,
 - **Mapped branch review:** `branch-reviewer` goes deep on flagged, `risk: high`,
   music-theory, and cross-wave areas and skims cleared ones. Above 3,000 changed
   non-test lines, split it by subsystem.
-- **Inline changes** are their own branch: `revgate task`, then a Sonnet 5 branch
-  review at medium effort when nothing is flagged.
+- **Inline changes** are their own branch: `revgate task`, then a
+  `branch-reviewer` review.
 
 ## Calibration and tightening
 
@@ -112,8 +112,9 @@ ladder:
 
 1. Widen the flags (`[risk.paths]`, the plan's `risk` rule, or `max_lines`).
 2. Deepen the branch review: escape-producing areas stop counting as cleared.
-3. Strengthen the reviewers: every focused wave review moves to Opus 5.5 at high
-   effort.
+
+Every focused wave review already runs on Opus 5.5 at high effort (2026-09-28), so
+the ladder has no reviewer-strength step.
 
 No step restores per-task LLM review.
 
@@ -210,20 +211,25 @@ following table sets each role:
 
 | Role | Typed agent | Model | Effort |
 |---|---|---|---|
-| Implementer, `risk: high` | `implementer-risky` | Opus 5.5 | the session's |
-| Implementer, `risk: low` | `implementer` | Opus 5.5 | the session's until calibration ends, then medium |
-| Adjudication (blocking finding or suppression) | `adjudicator` | Opus 5.5 | high |
+| Session (talks to the user, dispatches, folds findings) | — | Opus 5.5 | medium |
+| Spec and plan drafting | `drafter` | Sonnet 5.5 | high |
 | Spec and plan advisor | `plan-advisor` | Opus 5.5 | high |
+| Implementer, `risk: low` | `implementer` | Sonnet 5.5 | high |
+| Implementer, `risk: high` | `implementer-risky` | Opus 5.5 | high |
+| Adjudication (blocking finding or suppression) | `adjudicator` | Opus 5.5 | high |
 | Wave reviewer, with a `risk: high` task in focus | `wave-reviewer-domain` | Opus 5.5 | high |
-| Wave reviewer, otherwise | `wave-reviewer` | Sonnet 5 | medium |
+| Wave reviewer, otherwise | `wave-reviewer` | Opus 5.5 | high |
 | Branch reviewer | `branch-reviewer` | Opus 5.5 | high |
-| Explore and other read-only agents | `reader` | Sonnet 5 | low |
+| Research (docs, APIs, the web) | `researcher` | Sonnet 5.5 | high |
+| Explore and other read-only agents | `reader` | Sonnet 5.5 | medium |
+
+These defaults apply to every project (set 2026-09-28, when Sonnet 5.5 shipped).
+The session's own model and effort come from `~/.claude/settings.json`.
 
 No review uses a Fable model (decided 2026-09-23). A repo's own CLAUDE.md can
 override a row only by naming that row. A blanket rule such as "read-only agents run
-on Sonnet" doesn't reach the advisor, `wave-reviewer-domain`, or `branch-reviewer`:
-dispatch those by their typed agent with no `model`, since an explicit `model`
-overrides the agent's own pin.
+on Sonnet" doesn't reach the Opus rows: dispatch those by their typed agent with no
+`model`, since an explicit `model` overrides the agent's own pin.
 
 **Why:** a reviewer sharing context with the author inherits the author's blind
 spots. Now that the advisor runs on the same model as the author, the fresh

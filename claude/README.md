@@ -6,9 +6,9 @@ tested, reviewed, and reverted like any other code:
 - `CLAUDE.md`: the global instructions.
 - `skills/feature-development/`: the feature-development skill and its
   `wave-execution.md`.
-- `agents/`: the typed subagents (`implementer`, `implementer-risky`,
+- `agents/`: the typed subagents (`drafter`, `implementer`, `implementer-risky`,
   `adjudicator`, `plan-advisor`, `wave-reviewer`, `wave-reviewer-domain`,
-  `branch-reviewer`, and `reader`). Each one pins its own `model`, so a dispatch
+  `branch-reviewer`, `researcher`, and `reader`). Each one pins its own `model`, so a dispatch
   that names one never inherits the session's model.
 - `hooks/`: the `PreToolUse` hooks, `agent_model_guard.py` and
   `cd_only_reminder.py`.
