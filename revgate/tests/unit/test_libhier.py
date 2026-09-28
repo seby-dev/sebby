@@ -209,3 +209,47 @@ def test_missing_library_is_unverified(
     found, unverified = _lib_findings(make_repo, tmp_path, TURN_ONLY)
     assert found == []
     assert [u.note for u in unverified] == ["library-missing:fakelib"]
+
+
+TABLE = (
+    "from fakelib import expressions\n"
+    "\n"
+    "_TABLE = [\n"
+    '    (expressions.Trill, "trill"),\n'
+    '    (expressions.Turn, "turn"),\n'
+    "]\n"
+    "_SKIP = (expressions.InvertedTurn,)\n"
+    "\n"
+    "\n"
+    "def label(o):\n"
+    "{guard}"
+    "    for cls, name in _TABLE:\n"
+    "        if isinstance(o, cls):\n"
+    "            return name\n"
+    "    return None\n"
+)
+
+
+def test_a_dispatch_table_is_read_entry_by_entry(
+    make_repo: MakeRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A loop over a module-level (class, label) table dispatches on each entry in order,
+    # as the r1 and r3 prototypes read it (bench case C3); the finding sits on the entry.
+    _fakelib(tmp_path, monkeypatch)
+    found, _ = _lib_findings(make_repo, tmp_path, TABLE.format(guard=""))
+    assert [(f.rule, f.line, f.symbol) for f in found] == [
+        ("lib.subclass_unlisted", 4, "pkg.lab.label"),
+        ("lib.subclass_unhandled", 5, "pkg.lab.label"),
+    ]
+    assert "InvertedTurn" in found[1].message
+
+
+def test_a_guard_through_a_constant_tuple_excludes_its_classes(
+    make_repo: MakeRepo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `isinstance(o, _SKIP)` over a module-level tuple names each class in it, and a
+    # constant the function reads counts as mentioning its classes.
+    _fakelib(tmp_path, monkeypatch)
+    guard = "    if isinstance(o, _SKIP):\n        return None\n"
+    found, _ = _lib_findings(make_repo, tmp_path, TABLE.format(guard=guard))
+    assert [f.rule for f in found] == ["lib.subclass_unlisted"]

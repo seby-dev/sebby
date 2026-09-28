@@ -297,3 +297,53 @@ def test_syntax_error_file_is_recorded_not_raised() -> None:
 def test_null_bytes_are_a_parse_error_too() -> None:
     f = index_python_file("y.py", "x = 1\0\n", module="y", is_test=False)
     assert f.parse_error is not None
+
+
+def test_a_result_held_in_a_name_and_read_at_zero_is_index0() -> None:
+    # The prototype's consumer idiom (bench case C1): `x = f(...)` followed by `x[0]` in
+    # the same function reads only the first item, the same as `f(...)[0]`.
+    f = facts(
+        """
+        def user(item):
+            found = check(item)
+            if found:
+                report(found[0])
+            rows = other(item)
+            for r in rows:
+                pass
+            rows2 = third(item)
+            later = rows2[1]
+
+        def elsewhere(found):
+            return found[0]
+        """
+    )
+    uses = {c.callee: c.use for c in func(f, "pkg.mod.user").calls}
+    assert uses["check"] == "index0"
+    assert uses["other"] == "assigned"
+    assert uses["third"] == "assigned"
+
+
+def test_isinstance_through_a_dispatch_table_and_a_constant_tuple() -> None:
+    f = facts(
+        """
+        TABLE = [
+            (mod.A, "a"),
+            (mod.B, "b"),
+        ]
+        SKIP = (mod.C, mod.D)
+
+        def label(o):
+            if isinstance(o, SKIP):
+                return None
+            for cls, name in TABLE:
+                if isinstance(o, cls):
+                    return name
+        """
+    )
+    chains = [c for c in f.isinstance_chains if c.func == "pkg.mod.label"]
+    assert [[(b.classes, b.line) for b in c.branches] for c in chains] == [
+        [(("mod.A",), 3), (("mod.B",), 4)],
+        [(("mod.C", "mod.D"), 9)],
+    ]
+    assert {"mod.A", "mod.C", "mod.D"} <= set(chains[1].mentioned)
