@@ -1,116 +1,54 @@
-# Development Workflow
+# Development workflow
 
-## Project Location & Git Safety
+The procedure for any change to a repository lives in the `feature-development`
+skill (`~/.claude/skills/feature-development/SKILL.md`), with `wave-execution.md`
+beside it for multi-task plans. This file keeps only the rules that every
+session needs.
 
-- **All current and future projects live under `~/Developer/`** — never `~/Documents/Dev/`
-  or any other location. This is the canonical root for every repo, full stop.
-- **Known landmine — do not touch:** `~/.git` exists (an accidental home-directory repo,
-  created 2025-08-28 by a `git init` run from `$HOME` instead of a project directory). It
-  is currently live infrastructure backing other projects' linked worktrees — **never
-  delete, reinitialize, or run destructive commands against it.** Its mere existence means
-  any git command run with `cwd` anywhere under `$HOME` that isn't inside a project's own
-  `.git`-bearing directory will silently succeed against `~/.git` instead of erroring "not
-  a git repository." This is exactly how pmp-project's own repo got polluted early on
-  (docs commits landed in `~/.git`'s `main` before the mistake was caught and a clean repo
-  was created at the correct path).
-- **Before the first `git init`/`git commit` in any new project**, and any time you're
-  unsure which repo a git command will hit: run `git rev-parse --show-toplevel` and
-  confirm it matches the actual intended project directory under `~/Developer/`. If it
-  prints `/Users/sebby` (home) instead, STOP — you are about to operate on the wrong repo.
-- **Never use the harness's native worktree-switch tools (`EnterWorktree`/`ExitWorktree`)
-  — they hang in this environment.** Create and remove worktrees with plain git instead:
-  `git worktree add <path> -b <branch> <base-branch>` and `git worktree remove <path>` +
-  `git branch -d <branch>`. There's no need to "switch into" a worktree to work in it:
-  Read/Edit/Write take the worktree's absolute path directly, and git operations go
-  through `git -C <path> <command>` rather than `cd`. Note the Bash tool's cwd resets
-  to the session's pinned primary directory *between* calls (confirmed 2026-08-24:
-  `cd <path> && pwd` prints the new path correctly within that one call, but the next
-  call starts back at the pinned directory) — so for non-git tools that need a working
-  directory (`uv`, `pytest`, `make`), either call the binary by its full path
-  (`<worktree>/.venv/bin/<tool> ...`) or chain the whole sequence into one Bash call
-  (`cd <path> && cmd1 && cmd2 && ...`); never split `cd` and a dependent command across
-  separate calls.
+## Safety rules
 
-## Agent Strategy
-- For any task that can be decomposed into independent subtasks, always use subagents.
-- **Parallel by default**: if N items can be checked/implemented independently, spawn N subagents simultaneously — never check them one by one in a single agent.
-- **Wave-based dispatch for a multi-task plan with dependencies.** When a plan's tasks
-  aren't all mutually independent — the common case, since some share a file or need
-  another task's output first — group them into dependency waves instead of falling back
-  to one-at-a-time execution. A wave is every task whose prerequisites are already
-  complete and that shares no file with any other task in the same wave. Dispatch a
-  whole wave's tasks together, in one message, as parallel subagents, up to the
-  machine's concurrency limit (see the next bullet). Verify and commit each task's work
-  individually as it lands — never batch commits to the end of a wave — so one task's
-  problem never blocks landing the others. Per-task verification is the type-check plus
-  the tests for the files the task touched; the full suite, `make pre-push`, and the
-  end-to-end suite run once per wave, after its last task merges, in one reusable gate
-  worktree. Start the next wave only once every task in the current one is verified and
-  committed. Write the
-  file-ownership table and the wave assignment into the plan itself (see Full Feature
-  Workflow below) so a fresh dispatcher, not just the session that wrote the plan, can
-  execute it correctly.
-- Delegate exploratory/read-only work (finding files, analysing schemas) to an Explore subagent.
-- **Read-only subagents run on Sonnet 5.** Any subagent that only reads, searches,
-  runs checks, or reviews and reports, and never edits a file, commits, or pushes,
-  gets `model: "sonnet"`: Explore agents, code and security review agents, and
-  workflow steps that only verify or report. Pass it explicitly, because a subagent
-  with no `model` inherits the session's own. The one exception is the spec and plan
-  advisor review, which runs on Opus 5.5 (`model: "opus"`) as a fresh subagent with
-  no conversation history; no review uses a Fable model. A project's own CLAUDE.md
-  can override either rule.
-- Delegate planning and design to a Plan subagent before implementation begins.
-- Use background agents for long-running tasks (test runs, log analysis) so the main session stays responsive.
-- Up to 10 subagents can run in parallel, but the machine usually runs out first. This
-  Mac is an 8-core, 16 GB Apple M3: run up to five implementers at once when none of
-  them starts a browser, Playwright run, or dev server, each caps its test threads
-  (`vitest --maxWorkers=2`, serial targeted pytest), and memory has room; otherwise
-  three (five running browser suites pushed the load average to 186 on 2026-09-25).
-  Read-only agents don't count against that cap, and remote subagents
-  (`isolation: "remote"`), where available, don't use local cores. The feature-development skill's "Throughput and
-  Verification" section has the full rules.
+1. Pushing to origin is always manual: stop after committing and wait for an
+   explicit go-ahead, even under a blanket "proceed without checking in,"
+   because staff2solfa pushes run no CI and its `pre-push` hook runs
+   `make pre-push` locally.
+2. `~/.git` is live infrastructure (an accidental home-directory repository from
+   2025-08-28 that backs other projects' worktrees): never delete,
+   reinitialize, or run destructive commands against it, never run `git` in
+   `~/.claude`, and before the first `git init` or commit, confirm that
+   `git rev-parse --show-toplevel` prints the project directory, not
+   `/Users/sebby`.
+3. Never use the harness's `EnterWorktree` or `ExitWorktree` tools, because
+   they hang here: use `git worktree add`, `git worktree remove`, and
+   `git -C <path>`, and because the Bash tool's working directory resets
+   between calls, chain dependent commands in one call.
+4. This Mac is an 8-core, 16 GB M3, so run at most five implementers at once
+   when none starts a browser, Playwright run, or dev server and each caps its
+   test threads, and three otherwise; implementers run targeted tests only.
 
-## Full Feature Workflow
-When given a new feature request:
-1. **Brainstorm** (`superpowers:brainstorming`) — explore context, ask clarifying questions, propose approaches, write and commit a spec to `docs/superpowers/specs/`
-2. **Plan** (`superpowers:writing-plans`) — convert the approved spec into a step-by-step implementation plan saved to `docs/superpowers/plans/`
-3. **Implement** (`superpowers:subagent-driven-development`) — dispatch fresh subagents per task with spec + code quality review after each
-4. **Ship** — commit locally, then follow the Git & PR Workflow below; pushing to origin is always manual, never automatic
+## Project location
 
-## Decomposition Pattern
-When given an implementation task:
-1. Spawn an Explore subagent to map the relevant codebase
-2. Spawn a Plan subagent to design the approach
-3. Decompose implementation into independent modules and run them in parallel
-4. Spawn a review subagent to validate output before committing
+Every project lives under `~/Developer/`, never `~/Documents/Dev/` or any other
+location.
 
-## Parallelism Examples
-- "Check whether features A, B, C, D are implemented" → spawn 4 Explore subagents in one message, one per feature
-- "Implement modules X, Y, Z" → spawn 3 implementer subagents simultaneously if they don't share files
-- "Review these 5 files" → spawn 5 reviewer subagents in parallel
-- The signal: any time you find yourself writing "check A, then check B, then check C" — stop and parallelize it
+## Agents and models
 
-## Security & Review Workflow
+Pass a typed agent (from `~/.claude/agents/`) or an explicit `model` on every
+dispatch, because a subagent with neither inherits the session's model.
+Read-only agents run on Sonnet 5. Spec and plan advisors run on Opus 5.5 as
+fresh subagents with no conversation history. A project's own `CLAUDE.md` can
+override either rule. For every role's agent and model, see the role table in
+the skill's "Model selection" section.
 
-Before shipping, run `/sebby-toolkit:review`. It runs
-`pr-review-toolkit:code-reviewer` and `semgrep` unconditionally, and
-`pr-review-toolkit:silent-failure-hunter` whenever the diff touches
-error-handling or fallback code — narrowing only `review-pr`'s optional
-tests/types/comments aspects, and only on diffs a Jev risk score
-confidently calls low-risk. It never skips silently: it reports what it
-skipped and why. If the `sebby-toolkit` plugin isn't installed in a given
-project, fall back to running `pr-review-toolkit:silent-failure-hunter`,
-`pr-review-toolkit:code-reviewer`, and `semgrep` directly, in parallel.
+## Review and security
 
-Passive (always on, no invocation needed):
-- **`security-guidance`** — injects OWASP-style security reminders automatically each session
+- Per-task review is `revgate task` only. In a repository without
+  `.review.toml`, also run the repository's own targeted gates for the task.
+- The wave and branch gates are in the `feature-development` skill.
+- The branch gate runs `pr-review-toolkit:silent-failure-hunter` and the
+  semgrep CLI: `semgrep --config=auto <source dirs> --error`.
+- `security-guidance` stays on passively and needs no invocation.
 
-For new external integrations or auth flows, confirm `semgrep` actually
-ran as part of `/sebby-toolkit:review`'s step six — check its output if
-the session shows semgrep wasn't configured; it requires
-`/setup-semgrep-plugin` on first use.
-
-## Documentation Style
+## Documentation style
 
 All project documentation follows Google's developer documentation style guide
 (full reference: the `writing-style` skill). The rules below apply universally —
@@ -136,33 +74,13 @@ even for commit messages, PR descriptions, and CLAUDE.md edits.
 
 Load `writing-style` before writing or substantially revising any documentation.
 
-## Git & PR Workflow
+## Git and PR workflow
 
-**Pushing to origin is always manual, never automatic.** Every push triggers a
-GitHub Actions run, and Actions minutes are a metered, limited resource — stop
-after committing and wait for an explicit go-ahead before running `git push`,
-regardless of how the implementation task was authorized. This holds even
-under a blanket "proceed without checking in" instruction: that authorizes
-skipping check-ins on implementation decisions, not skipping the push
-confirmation.
+Only after the user's explicit go-ahead for that repository's push:
 
-When an implementation task is complete:
+1. Push the branch: `git push -u origin HEAD`.
+2. Open a PR: `gh pr create --title "<title>" --body "<summary>" --draft=false`.
+3. Merge it once checks pass: `gh pr merge --squash --auto --delete-branch`.
+4. Report the PR URL to the user.
 
-1. Stage and commit all changes with a descriptive commit message following conventional commits format.
-2. Report what's committed and ready, then stop. Wait for the user to confirm before pushing.
-3. Once the user confirms, push the branch to origin: `git push -u origin HEAD`.
-4. Create a PR using the `gh` CLI:
-
-```
-gh pr create --title "<title>" --body "<summary of changes, what was done and why>" --draft=false
-```
-
-5. If all CI checks pass, merge the PR:
-
-```
-gh pr merge --squash --auto --delete-branch
-```
-
-6. Report the PR URL to the user.
-
-Use `--auto` on the merge so it only merges once checks pass. Never force-push, and never merge while CI is failing.
+Never force-push, and never merge while CI is failing.
