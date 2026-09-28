@@ -235,9 +235,9 @@ def test_same_wave_dependency_on_a_risk_high_task() -> None:
 
 
 def test_same_wave_dependency_on_a_risk_path_owner() -> None:
-    cfg = parse_config(b'[risk.paths]\n"src/pitch*.py" = "wave"\n')
+    cfg = parse_config(b'[risk.paths]\n"src/core*.py" = "wave"\n')
     waves: list[Wave] = [
-        ("W1", [("W1a", [one("T1", create=["src/pitch.py", "tests/test_t1.py"])])]),
+        ("W1", [("W1a", [one("T1", create=["src/core.py", "tests/test_t1.py"])])]),
         ("W2", [("W2a", [one("T3")]), ("W2b", [one("T2", deps=["T3"])])]),
     ]
     assert codes(lint(build_plan(waves), cfg=cfg)) == set()
@@ -247,7 +247,7 @@ def test_same_wave_dependency_on_a_risk_path_owner() -> None:
         (
             "W1",
             [
-                ("W1a", [one("T1", create=["src/pitch.py", "tests/test_t1.py"])]),
+                ("W1a", [one("T1", create=["src/core.py", "tests/test_t1.py"])]),
                 ("W1b", [one("T2", deps=["T1"])]),
             ],
         )
