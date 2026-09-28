@@ -54,10 +54,10 @@ def by_rule(out: list[RuleOutput], rule: str) -> list[Finding]:
     return [o for o in out if isinstance(o, Finding) and o.rule == rule]
 
 
-def plan_md(code: str, interfaces: str = "", files: str = "- Modify: `pkg/cells.py`") -> str:
+def plan_md(code: str, interfaces: str = "", files: str = "- Modify: `pkg/rows.py`") -> str:
     iface = f"**Interfaces:**\n- Produces: {interfaces}\n\n" if interfaces else ""
     return (
-        "# Plan\n\n### Task 1: Cells\n\n**Files:**\n"
+        "# Plan\n\n### Task 1: Rows\n\n**Files:**\n"
         f"{files}\n\n{iface}- [ ] **Step 1: Implement**\n\n```python\n{code}```\n"
     )
 
@@ -76,20 +76,16 @@ def test_ids() -> None:
 
 # --- call edges -----------------------------------------------------------------------------
 
-CELLS_BASE = "def quarter_cell_steps(x):\n    return x * 4\n\n\ndef bar_cells(x):\n    return [x]\n"
-CELLS_HEAD = (
-    "def quarter_cell_steps(x):\n    return x * 4\n\n\ndef bar_cells(x):\n    return [x, x]\n"
-)
-OTHER = (
-    "from pkg.cells import quarter_cell_steps\n\n\ndef use(x):\n    return quarter_cell_steps(x)\n"
-)
-EDGE_CODE = "def bar_cells(x):\n    return quarter_cell_steps(x)\n"
+ROWS_BASE = "def step_count(x):\n    return x * 4\n\n\ndef build_rows(x):\n    return [x]\n"
+ROWS_HEAD = "def step_count(x):\n    return x * 4\n\n\ndef build_rows(x):\n    return [x, x]\n"
+OTHER = "from pkg.rows import step_count\n\n\ndef use(x):\n    return step_count(x)\n"
+EDGE_CODE = "def build_rows(x):\n    return step_count(x)\n"
 
 
 def edge_repo(make_repo: MakeRepo, base_extra: Mapping[str, str] | None = None) -> RepoFixture:
-    base = {"pkg/__init__.py": "", "pkg/cells.py": CELLS_BASE, "pkg/other.py": OTHER}
+    base = {"pkg/__init__.py": "", "pkg/rows.py": ROWS_BASE, "pkg/other.py": OTHER}
     base.update(base_extra or {})
-    return make_repo(base, {"pkg/cells.py": CELLS_HEAD}, plan=plan_md(EDGE_CODE))
+    return make_repo(base, {"pkg/rows.py": ROWS_HEAD}, plan=plan_md(EDGE_CODE))
 
 
 def test_call_edge_existing_callers_is_question(make_repo: MakeRepo, tmp_path: Path) -> None:
@@ -97,18 +93,18 @@ def test_call_edge_existing_callers_is_question(make_repo: MakeRepo, tmp_path: P
     found = by_rule(run_fidelity(ctx), "plan.call_edge_missing")
     assert len(found) == 1
     f = found[0]
-    assert (f.file, f.symbol, f.grade) == ("pkg/cells.py", "bar_cells", Grade.E2_STRUCTURAL)
-    assert "quarter_cell_steps" in f.message
+    assert (f.file, f.symbol, f.grade) == ("pkg/rows.py", "build_rows", Grade.E2_STRUCTURAL)
+    assert "step_count" in f.message
     routed = route(f, load_tier_table(), ctx.cfg, ctx.scope)
     assert routed.tier is Tier.ADVISORY
     assert "implementer" not in routed.audience
 
 
 def test_call_edge_present_is_silent(make_repo: MakeRepo, tmp_path: Path) -> None:
-    head = CELLS_BASE.replace("return [x]", "return [quarter_cell_steps(x)]")
+    head = ROWS_BASE.replace("return [x]", "return [step_count(x)]")
     repo = make_repo(
-        {"pkg/__init__.py": "", "pkg/cells.py": CELLS_BASE},
-        {"pkg/cells.py": head},
+        {"pkg/__init__.py": "", "pkg/rows.py": ROWS_BASE},
+        {"pkg/rows.py": head},
         plan=plan_md(EDGE_CODE),
     )
     assert (
@@ -118,12 +114,12 @@ def test_call_edge_present_is_silent(make_repo: MakeRepo, tmp_path: Path) -> Non
 
 
 def test_call_edge_ambiguous_unverified(make_repo: MakeRepo, tmp_path: Path) -> None:
-    dup = {"pkg/dup.py": "def quarter_cell_steps(x):\n    return x\n"}
+    dup = {"pkg/dup.py": "def step_count(x):\n    return x\n"}
     out = run_fidelity(build(edge_repo(make_repo, dup), tmp_path, plan_md(EDGE_CODE)))
     assert by_rule(out, "plan.call_edge_missing") == []
     notes = [o for o in out if isinstance(o, Unverified) and o.rule == "plan.call_edge_missing"]
     assert len(notes) == 1
-    assert "ambiguous" in notes[0].note and "quarter_cell_steps" in notes[0].note
+    assert "ambiguous" in notes[0].note and "step_count" in notes[0].note
 
 
 # --- signatures and symbols -----------------------------------------------------------------
@@ -132,8 +128,8 @@ def test_call_edge_ambiguous_unverified(make_repo: MakeRepo, tmp_path: Path) -> 
 def test_signature_mismatch(make_repo: MakeRepo, tmp_path: Path) -> None:
     md = plan_md("x = 1\n", interfaces="`def f(a, b)`")
     repo = make_repo(
-        {"pkg/__init__.py": "", "pkg/cells.py": "X = 0\n"},
-        {"pkg/cells.py": "def f(b, a):\n    return a - b\n"},
+        {"pkg/__init__.py": "", "pkg/rows.py": "X = 0\n"},
+        {"pkg/rows.py": "def f(b, a):\n    return a - b\n"},
         plan=md,
     )
     found = by_rule(run_fidelity(build(repo, tmp_path, md)), "plan.signature_mismatch")
@@ -142,7 +138,7 @@ def test_signature_mismatch(make_repo: MakeRepo, tmp_path: Path) -> None:
     assert (f.grade, f.source, f.file, f.symbol) == (
         Grade.E1_EXACT,
         Source.DECLARED,
-        "pkg/cells.py",
+        "pkg/rows.py",
         "f",
     )
     assert "(a, b)" in f.message and "(b, a)" in f.message
@@ -151,8 +147,8 @@ def test_signature_mismatch(make_repo: MakeRepo, tmp_path: Path) -> None:
 def test_signature_match_is_silent(make_repo: MakeRepo, tmp_path: Path) -> None:
     md = plan_md("x = 1\n", interfaces="`def f(a, b=2) -> int`")
     repo = make_repo(
-        {"pkg/__init__.py": "", "pkg/cells.py": "X = 0\n"},
-        {"pkg/cells.py": "def f(a: int, b: int = 2) -> int:\n    return a - b\n"},
+        {"pkg/__init__.py": "", "pkg/rows.py": "X = 0\n"},
+        {"pkg/rows.py": "def f(a: int, b: int = 2) -> int:\n    return a - b\n"},
         plan=md,
     )
     assert run_fidelity(build(repo, tmp_path, md)) == []
@@ -161,8 +157,8 @@ def test_signature_match_is_silent(make_repo: MakeRepo, tmp_path: Path) -> None:
 def test_signature_default_mismatch(make_repo: MakeRepo, tmp_path: Path) -> None:
     md = plan_md("x = 1\n", interfaces="`def f(a, b=2)`")
     repo = make_repo(
-        {"pkg/__init__.py": "", "pkg/cells.py": "X = 0\n"},
-        {"pkg/cells.py": "def f(a, b=3):\n    return a - b\n"},
+        {"pkg/__init__.py": "", "pkg/rows.py": "X = 0\n"},
+        {"pkg/rows.py": "def f(a, b=3):\n    return a - b\n"},
         plan=md,
     )
     found = by_rule(run_fidelity(build(repo, tmp_path, md)), "plan.signature_mismatch")
@@ -172,22 +168,22 @@ def test_signature_default_mismatch(make_repo: MakeRepo, tmp_path: Path) -> None
 def test_symbol_missing(make_repo: MakeRepo, tmp_path: Path) -> None:
     md = plan_md("def g(x):\n    return x\n")
     repo = make_repo(
-        {"pkg/__init__.py": "", "pkg/cells.py": "X = 0\n"},
-        {"pkg/cells.py": "X = 1\n"},
+        {"pkg/__init__.py": "", "pkg/rows.py": "X = 0\n"},
+        {"pkg/rows.py": "X = 1\n"},
         plan=md,
     )
     found = by_rule(run_fidelity(build(repo, tmp_path, md)), "plan.symbol_missing")
     assert len(found) == 1
     f = found[0]
-    assert (f.grade, f.source, f.file) == (Grade.E1_EXACT, Source.DECLARED, "pkg/cells.py")
+    assert (f.grade, f.source, f.file) == (Grade.E1_EXACT, Source.DECLARED, "pkg/rows.py")
     assert "g" in f.message
 
 
 def test_symbol_present_is_silent(make_repo: MakeRepo, tmp_path: Path) -> None:
     md = plan_md("def g(x):\n    return x\n")
     repo = make_repo(
-        {"pkg/__init__.py": "", "pkg/cells.py": "X = 0\n"},
-        {"pkg/cells.py": "def g(x):\n    return x\n"},
+        {"pkg/__init__.py": "", "pkg/rows.py": "X = 0\n"},
+        {"pkg/rows.py": "def g(x):\n    return x\n"},
         plan=md,
     )
     assert by_rule(run_fidelity(build(repo, tmp_path, md)), "plan.symbol_missing") == []
@@ -196,33 +192,33 @@ def test_symbol_present_is_silent(make_repo: MakeRepo, tmp_path: Path) -> None:
 # --- tests ----------------------------------------------------------------------------------
 
 BRIEF_TEST = (
-    "def test_relocates_marks():\n"
-    "    cells = bar_cells(3)\n"
-    "    assert cells == [3, 3]\n"
-    "    assert len(cells) == 2\n"
+    "def test_rearranges_items():\n"
+    "    rows = build_rows(3)\n"
+    "    assert rows == [3, 3]\n"
+    "    assert len(rows) == 2\n"
 )
-TEST_FILES = "- Modify: `pkg/cells.py`\n- Test: `tests/test_cells.py`"
+TEST_FILES = "- Modify: `pkg/rows.py`\n- Test: `tests/test_rows.py`"
 
 
 def test_missing_test_fires(make_repo: MakeRepo, tmp_path: Path) -> None:
     md = plan_md(BRIEF_TEST, files=TEST_FILES)
     repo = make_repo(
-        {"pkg/__init__.py": "", "pkg/cells.py": CELLS_BASE},
-        {"pkg/cells.py": CELLS_HEAD, "tests/test_cells.py": "def test_other():\n    assert 1\n"},
+        {"pkg/__init__.py": "", "pkg/rows.py": ROWS_BASE},
+        {"pkg/rows.py": ROWS_HEAD, "tests/test_rows.py": "def test_other():\n    assert 1\n"},
         plan=md,
     )
     found = by_rule(run_fidelity(build(repo, tmp_path, md)), "plan.test_missing")
     assert len(found) == 1
-    assert "test_relocates_marks" in found[0].message
-    assert found[0].file == "tests/test_cells.py"
+    assert "test_rearranges_items" in found[0].message
+    assert found[0].file == "tests/test_rows.py"
 
 
 def test_renamed_test_with_same_body_is_silent(make_repo: MakeRepo, tmp_path: Path) -> None:
     md = plan_md(BRIEF_TEST, files=TEST_FILES)
-    renamed = BRIEF_TEST.replace("test_relocates_marks", "test_bar_cells_doubles")
+    renamed = BRIEF_TEST.replace("test_rearranges_items", "test_build_rows_doubles")
     repo = make_repo(
-        {"pkg/__init__.py": "", "pkg/cells.py": CELLS_BASE},
-        {"pkg/cells.py": CELLS_HEAD, "tests/test_cells.py": renamed},
+        {"pkg/__init__.py": "", "pkg/rows.py": ROWS_BASE},
+        {"pkg/rows.py": ROWS_HEAD, "tests/test_rows.py": renamed},
         plan=md,
     )
     assert by_rule(run_fidelity(build(repo, tmp_path, md)), "plan.test_missing") == []
@@ -231,8 +227,8 @@ def test_renamed_test_with_same_body_is_silent(make_repo: MakeRepo, tmp_path: Pa
 def test_present_test_is_silent(make_repo: MakeRepo, tmp_path: Path) -> None:
     md = plan_md(BRIEF_TEST, files=TEST_FILES)
     repo = make_repo(
-        {"pkg/__init__.py": "", "pkg/cells.py": CELLS_BASE},
-        {"pkg/cells.py": CELLS_HEAD, "tests/test_cells.py": BRIEF_TEST},
+        {"pkg/__init__.py": "", "pkg/rows.py": ROWS_BASE},
+        {"pkg/rows.py": ROWS_HEAD, "tests/test_rows.py": BRIEF_TEST},
         plan=md,
     )
     assert by_rule(run_fidelity(build(repo, tmp_path, md)), "plan.test_missing") == []
@@ -289,11 +285,11 @@ def test_plan_files(make_repo: MakeRepo, tmp_path: Path) -> None:
 
 def test_plan_files_signature_change_exempts_test(make_repo: MakeRepo, tmp_path: Path) -> None:
     md = plan_md("x = 1\n")
-    test_src = "from pkg.cells import bar_cells\n\n\ndef test_b():\n    assert bar_cells(1, 2)\n"
+    test_src = "from pkg.rows import build_rows\n\n\ndef test_b():\n    assert build_rows(1, 2)\n"
     repo = make_repo(
-        {"pkg/__init__.py": "", "pkg/cells.py": CELLS_BASE, "tests/test_b.py": "B = 1\n"},
+        {"pkg/__init__.py": "", "pkg/rows.py": ROWS_BASE, "tests/test_b.py": "B = 1\n"},
         {
-            "pkg/cells.py": CELLS_BASE.replace("bar_cells(x)", "bar_cells(x, y)"),
+            "pkg/rows.py": ROWS_BASE.replace("build_rows(x)", "build_rows(x, y)"),
             "tests/test_b.py": test_src,
         },
         plan=md,

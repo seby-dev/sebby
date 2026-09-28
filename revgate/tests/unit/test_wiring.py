@@ -17,39 +17,41 @@ from revgate.static.wiring import WiringRule, production_references
 from revgate.verdict.route import route
 
 PLAN_PATH = "docs/plans/plan.md"
-BASE_MARKS = "def bar_cells(x):\n    return [x]\n"
-RELOCATE = "\n\ndef relocate(cells):\n    return list(reversed(cells))\n"
-TEST_MARKS = "from pkg.marks import relocate\n\n\ndef test_relocate():\n    assert relocate([1])\n"
+BASE_ITEMS = "def build_rows(x):\n    return [x]\n"
+RELOCATE = "\n\ndef rearrange(rows):\n    return list(reversed(rows))\n"
+TEST_ITEMS = (
+    "from pkg.items import rearrange\n\n\ndef test_rearrange():\n    assert rearrange([1])\n"
+)
 
 PLANNED_HERE = """# Plan
 
-### Task 1: Relocate marks
+### Task 1: Rearrange items
 
 **Files:**
-- Modify: `pkg/marks.py`
-- Test: `tests/test_marks.py`
+- Modify: `pkg/items.py`
+- Test: `tests/test_items.py`
 
 - [ ] **Step 1: Implement**
 
-Replace `bar_cells`' body:
+Replace `build_rows`' body:
 
 ```python
-cells = [x]
-return relocate(cells)
+rows = [x]
+return rearrange(rows)
 ```
 """
 
 DEFERRED = """# Plan
 
-### Task 1: Add relocate
+### Task 1: Add rearrange
 
 **Files:**
-- Modify: `pkg/marks.py`
-- Test: `tests/test_marks.py`
+- Modify: `pkg/items.py`
+- Test: `tests/test_items.py`
 
 ```python
-def relocate(cells):
-    return list(reversed(cells))
+def rearrange(rows):
+    return list(reversed(rows))
 ```
 
 ### Task 2: Something else
@@ -57,14 +59,14 @@ def relocate(cells):
 **Files:**
 - Modify: `pkg/other.py`
 
-### Task 3: Wire relocate
+### Task 3: Wire rearrange
 
 **Files:**
-- Modify: `pkg/cells.py`
+- Modify: `pkg/rows.py`
 
 ```python
-def bar_cells(x):
-    return relocate([x])
+def build_rows(x):
+    return rearrange([x])
 ```
 """
 
@@ -102,11 +104,11 @@ def findings(out: list[RuleOutput]) -> list[Finding]:
 
 def planned_repo(make_repo: MakeRepo, extra: Mapping[str, str | None] | None = None) -> RepoFixture:
     head: dict[str, str | None] = {
-        "pkg/marks.py": BASE_MARKS + RELOCATE,
-        "tests/test_marks.py": TEST_MARKS,
+        "pkg/items.py": BASE_ITEMS + RELOCATE,
+        "tests/test_items.py": TEST_ITEMS,
     }
     head.update(extra or {})
-    return make_repo({"pkg/__init__.py": "", "pkg/marks.py": BASE_MARKS}, head, plan=PLANNED_HERE)
+    return make_repo({"pkg/__init__.py": "", "pkg/items.py": BASE_ITEMS}, head, plan=PLANNED_HERE)
 
 
 def test_ids_and_languages() -> None:
@@ -120,34 +122,34 @@ def test_unwired_planned_here_fires(make_repo: MakeRepo, tmp_path: Path) -> None
     found = findings(outputs(ctx))
     assert [f.rule for f in found] == ["wiring.unwired_planned_here"]
     f = found[0]
-    assert (f.file, f.line, f.symbol) == ("pkg/marks.py", 5, "relocate")
+    assert (f.file, f.line, f.symbol) == ("pkg/items.py", 5, "rearrange")
     assert (f.grade, f.source, f.impact) == (Grade.E1_EXACT, Source.DECLARED, "critical")
-    assert f.message == "relocate is new and nothing in production calls it"
-    assert f.fix == "call relocate from bar_cells, as the brief's code block does"
-    assert "0 production refs" in f.evidence and "bar_cells -> relocate" in f.evidence
+    assert f.message == "rearrange is new and nothing in production calls it"
+    assert f.fix == "call rearrange from build_rows, as the brief's code block does"
+    assert "0 production refs" in f.evidence and "build_rows -> rearrange" in f.evidence
     routed = route(f, load_tier_table(), ctx.cfg, ctx.scope)
     assert routed.tier is Tier.ADVISORY and routed.review
     assert routed.audience == frozenset({"implementer", "wave", "log"})
 
 
 def test_unwired_planned_here_silent_when_wired(make_repo: MakeRepo, tmp_path: Path) -> None:
-    wired = "def bar_cells(x):\n    return relocate([x])\n" + RELOCATE
-    repo = planned_repo(make_repo, {"pkg/marks.py": wired})
+    wired = "def build_rows(x):\n    return rearrange([x])\n" + RELOCATE
+    repo = planned_repo(make_repo, {"pkg/items.py": wired})
     assert findings(outputs(build(repo, tmp_path, PLANNED_HERE))) == []
 
 
 def test_unwired_planned_here_silent_with_string_registry(
     make_repo: MakeRepo, tmp_path: Path
 ) -> None:
-    registry = 'HANDLERS = {"relocate": "pkg.marks"}\n'
+    registry = 'HANDLERS = {"rearrange": "pkg.items"}\n'
     repo = planned_repo(make_repo, {"pkg/registry.py": registry})
     assert findings(outputs(build(repo, tmp_path, PLANNED_HERE))) == []
 
 
 def test_unwired_deferred_to_later_owner(make_repo: MakeRepo, tmp_path: Path) -> None:
     repo = make_repo(
-        {"pkg/__init__.py": "", "pkg/marks.py": BASE_MARKS},
-        {"pkg/marks.py": BASE_MARKS + RELOCATE, "tests/test_marks.py": TEST_MARKS},
+        {"pkg/__init__.py": "", "pkg/items.py": BASE_ITEMS},
+        {"pkg/items.py": BASE_ITEMS + RELOCATE, "tests/test_items.py": TEST_ITEMS},
         plan=DEFERRED,
     )
     out = outputs(build(repo, tmp_path, DEFERRED))
@@ -156,25 +158,25 @@ def test_unwired_deferred_to_later_owner(make_repo: MakeRepo, tmp_path: Path) ->
     assert len(obligations) == 1
     ob = obligations[0]
     assert (ob.status, ob.owner) == ("deferred", "3")
-    assert ob.anchor.path == "pkg/marks.py"
-    assert ob.params["symbol"] == "relocate"
+    assert ob.anchor.path == "pkg/items.py"
+    assert ob.params["symbol"] == "rearrange"
 
 
 def test_unplanned_new_symbol_is_generic(make_repo: MakeRepo, tmp_path: Path) -> None:
-    plan = PLANNED_HERE.replace("return relocate(cells)", "return cells")
+    plan = PLANNED_HERE.replace("return rearrange(rows)", "return rows")
     repo = make_repo(
-        {"pkg/__init__.py": "", "pkg/marks.py": BASE_MARKS},
-        {"pkg/marks.py": BASE_MARKS + RELOCATE, "tests/test_marks.py": TEST_MARKS},
+        {"pkg/__init__.py": "", "pkg/items.py": BASE_ITEMS},
+        {"pkg/items.py": BASE_ITEMS + RELOCATE, "tests/test_items.py": TEST_ITEMS},
         plan=plan,
     )
     found = findings(outputs(build(repo, tmp_path, plan)))
     assert [f.rule for f in found] == ["wiring.unwired_new_symbol"]
     assert found[0].source is Source.GENERIC
-    assert "tests/test_marks.py" in found[0].evidence
+    assert "tests/test_items.py" in found[0].evidence
 
 
 def test_excluded_candidates_are_skipped(make_repo: MakeRepo, tmp_path: Path) -> None:
-    base = BASE_MARKS + "\n\nclass Base:\n    def run(self):\n        return 1\n"
+    base = BASE_ITEMS + "\n\nclass Base:\n    def run(self):\n        return 1\n"
     head = (
         base
         + "\n\nclass Child(Base):\n    def run(self):\n        return 2\n"
@@ -183,19 +185,19 @@ def test_excluded_candidates_are_skipped(make_repo: MakeRepo, tmp_path: Path) ->
         + "\n\ndef outer():\n    def inner():\n        return 1\n    return inner\n"
         + "\n\nBOTH = [Child, outer]\n"
     )
-    plan = PLANNED_HERE.replace("return relocate(cells)", "return cells")
+    plan = PLANNED_HERE.replace("return rearrange(rows)", "return rows")
     repo = make_repo(
-        {"pkg/__init__.py": "", "pkg/marks.py": base}, {"pkg/marks.py": head}, plan=plan
+        {"pkg/__init__.py": "", "pkg/items.py": base}, {"pkg/items.py": head}, plan=plan
     )
     assert findings(outputs(build(repo, tmp_path, plan))) == []
 
 
 def test_production_references_exclude_own_definition(make_repo: MakeRepo, tmp_path: Path) -> None:
-    recursive = "\n\ndef relocate(cells):\n    return relocate(cells[1:]) if cells else []\n"
-    repo = planned_repo(make_repo, {"pkg/marks.py": BASE_MARKS + recursive})
+    recursive = "\n\ndef rearrange(rows):\n    return rearrange(rows[1:]) if rows else []\n"
+    repo = planned_repo(make_repo, {"pkg/items.py": BASE_ITEMS + recursive})
     ctx = build(repo, tmp_path, PLANNED_HERE)
-    assert production_references(ctx, "relocate", "pkg/marks.py", (5, 6)) == []
-    assert len(production_references(ctx, "relocate", "other.py", (1, 1))) == 1
+    assert production_references(ctx, "rearrange", "pkg/items.py", (5, 6)) == []
+    assert len(production_references(ctx, "rearrange", "other.py", (1, 1))) == 1
 
 
 def test_planless_context_yields_nothing(make_repo: MakeRepo, tmp_path: Path) -> None:
