@@ -60,7 +60,14 @@ class Provenance(StrEnum):
 Impact = Literal["critical", "important", "minor"]
 Kind = Literal["defect", "spec_gap", "test_gap", "integration", "gaming", "doc"]
 Status = Literal[
-    "open", "explained", "acknowledged", "suppressed", "deferred", "fixed", "not_examined"
+    "open",
+    "explained",
+    "acknowledged",
+    "suppressed",
+    "deferred",
+    "fixed",
+    "not_examined",
+    "clustered",
 ]
 AudienceName = Literal["implementer", "wave", "controller", "log"]
 ObligationStatus = Literal["open", "deferred", "discharged", "unverified"]
@@ -70,7 +77,16 @@ _KINDS: frozenset[str] = frozenset(
     {"defect", "spec_gap", "test_gap", "integration", "gaming", "doc"}
 )
 _STATUSES: frozenset[str] = frozenset(
-    {"open", "explained", "acknowledged", "suppressed", "deferred", "fixed", "not_examined"}
+    {
+        "open",
+        "explained",
+        "acknowledged",
+        "suppressed",
+        "deferred",
+        "fixed",
+        "not_examined",
+        "clustered",
+    }
 )
 _OBLIGATION_STATUSES: frozenset[str] = frozenset({"open", "deferred", "discharged", "unverified"})
 
@@ -174,6 +190,8 @@ class Finding:
     audience: frozenset[str]
     round: int
     also: tuple[str, ...] = ()
+    # With status "clustered": the id of the finding that absorbed this one as corroboration.
+    absorbed_by: str | None = None
 
 
 def _truncate(text: str, cap: int) -> str:
@@ -402,6 +420,7 @@ def finding_to_dict(f: Finding) -> dict[str, object]:
         "audience": sorted(f.audience),
         "round": f.round,
         "also": list(f.also),
+        "absorbed_by": f.absorbed_by,
     }
 
 
@@ -430,6 +449,7 @@ def finding_from_dict(d: Mapping[str, object]) -> Finding:
         audience=frozenset(_strs(d, "audience")),
         round=_int(d, "round"),
         also=_strs(d, "also", ()),
+        absorbed_by=_opt_str(d, "absorbed_by"),
     )
 
 

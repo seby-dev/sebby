@@ -2,8 +2,11 @@
 
 For each id, the newest run file that holds it gives the base, plan, task, and plan
 revision; the static phase re-runs at `--head` with those inputs, and the finding is
-`fixed` when no output shares its `(rule, cluster_key)`, else `still present`. The exit
-code is `1` when a still-present finding routes as blocking for the implementer.
+`fixed` when no output shares its `(rule, cluster_key)`, else `still present`. It's
+`unknown` when its rule crashed or the budget skipped it, and for a gate or wave finding,
+which only `revgate task` or `revgate wave` can re-run. The exit code is `2` when any
+finding is unknown or not found, else `1` when a still-present finding routes as blocking
+for the implementer.
 """
 
 from __future__ import annotations
@@ -54,9 +57,15 @@ def _find(state: Path, finding_id: str) -> _Origin | None:
     return best[2] if best is not None else None
 
 
+_NOT_STATIC = ("gate.", "wave.")
+
+
 def _recheck_one(top: Path, state: Path, head: str, origin: _Origin) -> tuple[str, bool]:
-    """`(status, blocking)` for one finding at `head`."""
+    """`(status, blocking)` for one finding at `head`; status starts with `unknown` when the
+    static phase can't tell."""
     rf = origin.run
+    if origin.finding.rule.startswith(_NOT_STATIC):
+        return f"unknown ({origin.finding.rule} isn't a static finding; rerun revgate task)", False
     try:
         cfg = load_config(top, rev=rf.base)
     except ConfigError as exc:
@@ -78,7 +87,7 @@ def _recheck_one(top: Path, state: Path, head: str, origin: _Origin) -> tuple[st
                 ledger_assigned(state, plan_slug(rf.plan), rf.task),
             )
     try:
-        outputs, _ctx, _ratchet = review_static(
+        phase = review_static(
             top,
             rf.base,
             head,
@@ -91,9 +100,13 @@ def _recheck_one(top: Path, state: Path, head: str, origin: _Origin) -> tuple[st
     except Exception as exc:  # the index or the change model crashed: exit 2 (A6)
         raise RecheckAbort(f"the index or change model failed: {exc!r}") from exc
     target = origin.finding
+    if target.rule in phase.unrun:
+        errors = "; ".join(f"{k}: {v}" for k, v in sorted(phase.rule_errors.items()))
+        why = f"its rule crashed: {errors}" if errors else "the budget skipped its rule"
+        return f"unknown ({why})", False
     matches = [
         o
-        for o in outputs
+        for o in phase.outputs
         if isinstance(o, Finding) and (o.rule, o.cluster_key) == (target.rule, target.cluster_key)
     ]
     if not matches:
@@ -131,6 +144,8 @@ def _run_recheck(repo: Path, head_rev: str, finding_ids: Sequence[str], out: Tex
             continue
         status, blocking = _recheck_one(top, state, head, origin)
         print(f"{fid}: {status}", file=out)
-        if blocking:
+        if status.startswith("unknown"):
+            code = max(code, 2)
+        elif blocking:
             code = max(code, 1)
     return code

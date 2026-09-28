@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -11,8 +12,8 @@ from test_plan_lint import build_plan, one, valid_waves
 from revgate.cli import main
 from revgate.gitio import common_dir
 from revgate.labels import rule_stats
-from revgate.model import run_file_from_json
-from revgate.store import ledger_entries, run_file_path
+from revgate.model import Grade, Source, new_finding, run_file_from_json
+from revgate.store import ledger_entries, run_file_path, write_run_file
 
 SHAPES = "class Base:\n    pass\n\n\nclass Sub(Base):\n    pass\n"
 USE_BASE = 'from pkg.shapes import Base, Sub\n\n\ndef kind(x):\n    return "none"\n'
@@ -121,3 +122,43 @@ def test_recheck(blocking: RepoFixture, capsys: pytest.CaptureFixture[str]) -> N
     assert main(["recheck", "--repo", str(fx.path), "--head", fixed, fid]) == 0
     assert f"{fid}: fixed" in capsys.readouterr().out
     assert git(fx.path, "rev-parse", "HEAD") == fixed
+
+
+def test_recheck_says_unknown_when_the_rule_crashed(
+    blocking: RepoFixture, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fx = blocking
+    assert _task(fx) == 1
+    fid = _finding_id(fx, "lib.isinstance_shadowing")
+    capsys.readouterr()
+
+    def boom(self: object, ctx: object) -> object:
+        raise RuntimeError("index exploded")
+
+    monkeypatch.setattr("revgate.static.libhier.LibHierarchyRule.check", boom)
+    assert main(["recheck", "--repo", str(fx.path), "--head", fx.head, fid]) == 2
+    out = capsys.readouterr().out
+    assert f"{fid}: unknown" in out and "index exploded" in out
+
+
+def test_recheck_refuses_a_gate_finding(
+    blocking: RepoFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fx = blocking
+    assert _task(fx) == 1
+    state = common_dir(fx.path) / "revgate"
+    path = run_file_path(state, "T1", fx.head, "implementer")
+    rf = run_file_from_json(path.read_text(encoding="utf-8"))
+    gate = new_finding(
+        "gate.failed",
+        file="pkg/use.py",
+        line=1,
+        message="pytest failed",
+        evidence="exit 1",
+        grade=Grade.E0_EXECUTED,
+        source=Source.POLICY,
+    )
+    write_run_file(state, dataclasses.replace(rf, findings=(*rf.findings, gate)))
+    capsys.readouterr()
+    assert main(["recheck", "--repo", str(fx.path), "--head", fx.head, gate.id]) == 2
+    assert f"{gate.id}: unknown" in capsys.readouterr().out

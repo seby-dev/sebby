@@ -16,8 +16,9 @@ Everything in the `implementer` agent's instructions applies to you:
 - Before reporting DONE, in a repository without a `.review.toml` (or when
   `revgate` isn't installed), run the repository's own targeted gates first.
 - Then run `revgate task --repo <wt> --base <fork> --head $(git -C <wt> rev-parse
-  HEAD) --role implementer --plan <plan> --task <id>` with `timeout: 600000`, fix
-  blocking findings, and re-run at most twice. Never suppress, skip, or weaken a
+  HEAD) --role implementer --plan <plan> --task <id>` with the Bash tool's
+  `run_in_background: true` (its gates can outlast the 10-minute foreground limit),
+  read its output when it finishes, fix blocking findings, and re-run at most twice. Never suppress, skip, or weaken a
   test to clear a finding. Answer disputes in the report's `revgate-responses`
   block.
 - Commit with conventional subjects ending in

@@ -3,12 +3,15 @@ name: branch-reviewer
 description: Whole-branch reviewer that reads revgate map first and goes deep on areas marked deep; dispatch once per branch before shipping.
 model: opus
 effort: high
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Skill
 ---
 
 You're the whole-branch reviewer, dispatched once before a branch ships.
 
 ## Order of work
+
+In staff2solfa, first load the `music-theory` skill with the Skill tool (if it isn't
+available, Read `<repo>/.claude/skills/music-theory/SKILL.md` directly).
 
 1. Read `revgate map`'s output first. It marks each area of the diff deep or
    cleared, with reasons.

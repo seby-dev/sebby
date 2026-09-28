@@ -4,8 +4,8 @@ Each template expands its placeholders from the task's files (pipeline spec Appe
 "Gate phase"). A command whose placeholder expands to nothing is skipped, never run
 unscoped, and a web command runs only when the task touches `web/`. A failing command is
 one `gate.failed` finding, unless every test it names already failed at the wave's base
-gate; a timeout or a command that couldn't start is recorded as couldn't-run, which the
-caller turns into exit 2.
+gate and its output reports no failure those names don't cover; a timeout or a command
+that couldn't start is recorded as couldn't-run, which the caller turns into exit 2.
 """
 
 from __future__ import annotations
@@ -33,8 +33,15 @@ _TS_SUFFIXES = (".ts", ".tsx", ".mts", ".cts")
 _PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _WEB_FLAGS = (("--prefix", "web"), ("-p", "web"))
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-_PYTEST_FAILED_RE = re.compile(r"^FAILED\s+(\S.*?)(?:\s+-\s.*)?$")
+_PYTEST_FAILED_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S.*?)(?:\s+-\s.*)?$")
 _VITEST_FAIL_RE = re.compile(r"^\s*FAIL\s+(\S+\s+>\s+.+?)\s*$")
+# A Vitest suite that failed as a whole (an import error): `FAIL  src/x.test.ts [ ... ]`.
+_VITEST_SUITE_RE = re.compile(r"^\s*FAIL\s+(\S+\.(?:test|spec)\.[cm]?[jt]sx?)(?:\s+\[.*\])?\s*$")
+# Any line that reports a failure, parsed or not.
+_FAILURE_LINE_RE = re.compile(r"^\s*(?:FAIL|FAILED|ERROR)\b")
+# pytest's closing summary: `=== 2 failed, 1 error in 0.3s ===`.
+_PYTEST_COUNT_RE = re.compile(r"(\d+) (failed|errors?)\b")
+_PYTEST_SUMMARY_RE = re.compile(r"^=+ .*\bin [\d.]+s\b.*=+$")
 _SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
 TAIL_LINES = 60
 TAIL_CHARS = 8000
@@ -141,15 +148,37 @@ def _is_web_command(template: str) -> bool:
 # --- failed tests and the wave gate record -----------------------------------------------
 
 
+def _match_failure(line: str) -> re.Match[str] | None:
+    return (
+        _PYTEST_FAILED_RE.match(line) or _VITEST_FAIL_RE.match(line) or _VITEST_SUITE_RE.match(line)
+    )
+
+
 def parse_failed_tests(output: str) -> tuple[str, ...]:
-    """Test ids from pytest `FAILED <nodeid>` and Vitest `FAIL <file> > <name>` lines."""
+    """Test ids from pytest `FAILED <nodeid>` and `ERROR <nodeid>` lines, Vitest `FAIL
+    <file> > <name>` lines, and Vitest `FAIL <file>` suite failures."""
     found: list[str] = []
     for raw in output.splitlines():
-        line = _ANSI_RE.sub("", raw).rstrip()
-        m = _PYTEST_FAILED_RE.match(line) or _VITEST_FAIL_RE.match(line)
+        m = _match_failure(_ANSI_RE.sub("", raw).rstrip())
         if m is not None:
             found.append(m.group(1).strip())
     return tuple(_dedupe(found))
+
+
+def has_unparsed_failure(output: str) -> bool:
+    """A failure the test ids don't account for: a FAIL, FAILED, or ERROR line no pattern
+    reads, or a pytest summary counting more failures and errors than the ids name."""
+    ids = 0
+    counted = 0
+    for raw in output.splitlines():
+        line = _ANSI_RE.sub("", raw).rstrip()
+        if _match_failure(line) is not None:
+            ids += 1
+        elif _FAILURE_LINE_RE.match(line):
+            return True
+        if _PYTEST_SUMMARY_RE.match(line.strip()):
+            counted = sum(int(n) for n, _kind in _PYTEST_COUNT_RE.findall(line))
+    return counted > ids
 
 
 def _wave_gate_path(state: Path, sha: str) -> Path:
@@ -237,7 +266,7 @@ def run_gate_phase(
         if run.status == "failed":
             failed_tests = parse_failed_tests(run.output)
             new = tuple(t for t in failed_tests if t not in pre_existing)
-            if new or not failed_tests:
+            if new or not failed_tests or has_unparsed_failure(run.output):
                 findings.append(_finding(template, argv, run.exit, new, anchor))
         elif run.status in ("timeout", "couldnt_run"):
             couldnt_run.append(template)

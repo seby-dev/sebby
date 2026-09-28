@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import dataclasses
 import io
 from pathlib import Path
 
-from conftest import MakeRepo, RepoFixture
+from conftest import MakeRepo, RepoFixture, git
 
 from revgate import __version__
 from revgate.gates import wave_gate_failures
 from revgate.gitio import common_dir
-from revgate.model import RunFile, run_file_from_json
-from revgate.store import run_file_path, write_run_file
+from revgate.model import Finding, Grade, RunFile, Source, Tier, new_finding, run_file_from_json
+from revgate.plan import plan_slug
+from revgate.store import ledger_append, run_file_path, write_run_file
 from revgate.task_cmd import source_hash
 from revgate.wave_cmd import run_wave
 
@@ -66,7 +68,17 @@ class Wave:
         self.t2 = fx.commit(t2_files or {"src/t2.py": "TWO = 2\n"}, "T2")
         self.state = common_dir(fx.path) / "revgate"
 
-    def controller_run(self, task: str, base: str, head: str, src_hash: str | None = None) -> None:
+    def controller_run(
+        self,
+        task: str,
+        base: str,
+        head: str,
+        src_hash: str | None = None,
+        *,
+        exit_code: int = 0,
+        findings: tuple[Finding, ...] = (),
+        incomplete: tuple[str, ...] = (),
+    ) -> None:
         rf = RunFile(
             task=task,
             role="controller",
@@ -79,11 +91,11 @@ class Wave:
             config_hash="",
             focus=False,
             focus_reasons=(),
-            findings=(),
+            findings=findings,
             obligations=(),
             unverified=(),
-            incomplete=(),
-            exit_code=0,
+            incomplete=incomplete,
+            exit_code=exit_code,
         )
         write_run_file(self.state, rf)
 
@@ -167,3 +179,82 @@ def test_gate_log_records_failures(make_repo: MakeRepo, tmp_path: Path) -> None:
     )
     w.run(gate_log=log)
     assert wave_gate_failures(w.state, w.t2) == frozenset({"tests/test_b.py::test_two"})
+
+
+def _blocking(line: int = 3) -> Finding:
+    f = new_finding(
+        "policy.unjustified_suppression",
+        file="src/t2.py",
+        line=line,
+        message="m",
+        evidence="e",
+        grade=Grade.E1_EXACT,
+        source=Source.POLICY,
+    )
+    return dataclasses.replace(f, tier=Tier.BLOCKING, audience=frozenset({"implementer"}))
+
+
+def test_a_controller_run_that_failed_blocks(make_repo: MakeRepo) -> None:
+    w = Wave(make_repo)
+    w.controller_run("T1", w.fx.base, w.t1)
+    w.controller_run("T2", w.t1, w.t2, exit_code=1, findings=(_blocking(),))
+    code, text = w.run()
+    assert code == 1, text
+    assert "T2" in text and "exited 1" in text
+
+
+def test_a_ruling_covers_a_failed_controller_run(make_repo: MakeRepo) -> None:
+    w = Wave(make_repo)
+    f = _blocking()
+    w.controller_run("T1", w.fx.base, w.t1)
+    w.controller_run("T2", w.t1, w.t2, exit_code=1, findings=(f,))
+    ledger_append(
+        w.state,
+        plan_slug(PLAN_PATH),
+        {
+            "kind": "ruling",
+            "task": "T2",
+            "rule": f.rule,
+            "cluster_key": f.cluster_key,
+            "witness_digest": f.witness_digest,
+            "verdict": "explained",
+        },
+    )
+    code, text = w.run()
+    assert code == 0, text
+
+
+def test_an_incomplete_controller_run_blocks(make_repo: MakeRepo) -> None:
+    w = Wave(make_repo)
+    w.controller_run("T1", w.fx.base, w.t1)
+    w.controller_run("T2", w.t1, w.t2, exit_code=2, incomplete=("gate mypy timed out",))
+    code, text = w.run()
+    assert code == 1, text
+    assert "gate mypy timed out" in text
+
+
+def test_a_task_commit_after_its_controller_run_blocks(make_repo: MakeRepo) -> None:
+    # T2 runs the controller at its tip, then commits an unowned edit on its branch, and the
+    # branch merges with --no-ff: the run no longer matches the merged task tip, and the
+    # unowned check reads the whole merged range, not only the controller run's.
+    fx = make_repo(
+        {"src/__init__.py": ""},
+        {"src/t1.py": "ONE = 1\n"},
+        plan=PLAN,
+        plan_path=PLAN_PATH,
+        review_toml=REVIEW_TOML,
+    )
+    w = Wave.__new__(Wave)
+    w.fx, w.t1, w.state = fx, fx.head, common_dir(fx.path) / "revgate"
+    git(fx.path, "checkout", "-q", "-b", "t2")
+    ran = fx.commit({"src/t2.py": "TWO = 2\n"}, "T2")
+    tip = fx.commit({"src/other.py": "X = 0\n"}, "T2 late edit")
+    git(fx.path, "checkout", "-q", "main")
+    git(fx.path, "merge", "-q", "--no-ff", "-m", "merge T2", "t2")
+    w.t2 = git(fx.path, "rev-parse", "HEAD")
+    w.controller_run("T1", fx.base, w.t1)
+    w.controller_run("T2", w.t1, ran)
+    code, text = w.run()
+    assert code == 1, text
+    assert tip[:7] in text
+    assert "src/other.py" in text

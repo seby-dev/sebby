@@ -177,6 +177,56 @@ def test_typescript_suppression_markers(make_repo: MakeRepo) -> None:
     assert result.findings[0].line == 1
 
 
+def test_as_any_in_a_block_comment_is_prose(make_repo: MakeRepo) -> None:
+    for head in (
+        "/** Treat a rest as any other note. */\nexport const a = 1;\n",
+        "export const a = 1;\n/**\n * Rests count as any other event.\n */\n",
+        "/* a cast as any\n   other cast */ export const a = 1;\n",
+    ):
+        r = make_repo({"web/src/a.ts": "export const z = 0;\n"}, {"web/src/a.ts": head})
+        result = _run(r)
+        assert result.findings == (), head
+        assert result.suppression_added is False, head
+
+
+def test_typescript_reason_styles(make_repo: MakeRepo) -> None:
+    cases = {
+        "export const a = b as any; // the library's typings are wrong\n": [],
+        "// @ts-expect-error: the glyph union lags the font\nexport const a = 1;\n": [],
+        '// @ts-expect-error: "x" is not a GlyphName yet\nexport const a = 1;\n': [],
+        "// @ts-expect-error the glyph union lags the font\nexport const a = 1;\n": [],
+        "// @ts-ignore\nexport const a = 1;\n": ["policy.unjustified_suppression"],
+        "// @ts-expect-error: TS2322\nexport const a = 1;\n": ["policy.unjustified_suppression"],
+        "export const a = b as any; // eslint-disable-line\n": ["policy.unjustified_suppression"],
+        "// eslint-disable-next-line no-console\nconsole.log(1);\n": [
+            "policy.unjustified_suppression"
+        ],
+        "// eslint-disable-next-line no-console -- a CLI entry point\nconsole.log(1);\n": [],
+    }
+    for head, expected in cases.items():
+        r = make_repo({"web/src/a.ts": "export const z = 0;\n"}, {"web/src/a.ts": head})
+        result = _run(r)
+        assert _rules(result) == expected, head
+        assert result.suppression_added is True, head
+
+
+def test_editing_a_line_that_keeps_its_marker_adds_no_suppression(make_repo: MakeRepo) -> None:
+    marker = "  # type: ignore[arg-type]\n"
+    base = {"src/a.py": "import os\n\ndef f(x):\n    return os.path.join(x, 'a')" + marker}
+    head = "import os\n\ndef f(x, y):\n    return os.path.join(x, y)" + marker
+    result = _run(make_repo(base, {"src/a.py": head}))
+    assert result.findings == ()
+    assert result.suppression_added is False
+
+
+def test_a_new_marker_beside_an_untouched_one_is_added(make_repo: MakeRepo) -> None:
+    base = {"src/a.py": "import os  # noqa: F401\nx = 1\n"}
+    head = "import os  # noqa: F401\nx = y  # noqa: F821\n"
+    result = _run(make_repo(base, {"src/a.py": head}))
+    assert [(f.rule, f.line) for f in result.findings] == [("policy.unjustified_suppression", 2)]
+    assert result.suppression_added is True
+
+
 def test_environment_guards_are_allowed(make_repo: MakeRepo) -> None:
     head = BASE_TEST.replace(
         "from pkg.a import f\n",
@@ -329,7 +379,7 @@ def test_a_marker_in_prose_is_not_a_suppression(make_repo: MakeRepo) -> None:
             "web/src/a.ts": (
                 "// dropped, same as any other version mismatch\n"
                 'export const a = "cast as any";\n'
-                "export const b = c as any; // as any\n"
+                "export const b = c as any; /* as any */\n"
             ),
             "src/a.py": (
                 'def f():\n    """A `# type: ignore` here would be flagged."""\n    return 1\n'

@@ -210,6 +210,39 @@ def test_failure_without_test_ids_always_gives_a_finding(make_repo: MakeRepo) ->
     assert "exit 4" in result.findings[0].evidence
 
 
+def test_parse_failed_tests_reads_errors_and_suite_failures() -> None:
+    output = (
+        "ERROR tests/test_b.py::test_setup - fixture 'db' not found\n"
+        "ERROR tests/test_c.py - ImportError: no module named x\n"
+        " FAIL  src/x.test.ts [ src/x.test.ts ]\n"
+        "FAILED tests/test_a.py::test_old - flaky\n"
+    )
+    assert parse_failed_tests(output) == (
+        "tests/test_b.py::test_setup",
+        "tests/test_c.py",
+        "src/x.test.ts",
+        "tests/test_a.py::test_old",
+    )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "print('ERROR tests/test_b.py::test_setup - fixture not found'); ",
+        "print(' FAIL  src/x.test.ts [ src/x.test.ts ]'); ",
+        "print('FAIL something the parser has never seen'); ",
+        "print('=== 1 failed, 1 error in 0.30s ==='); ",
+    ],
+)
+def test_a_known_failure_does_not_mask_an_unparsed_one(make_repo: MakeRepo, extra: str) -> None:
+    code = extra + "print('FAILED tests/test_a.py::test_a - old'); raise SystemExit(1)"
+    fx = repo_with(make_repo, [one_liner(code)])
+    record_wave_gate(state_dir(fx.path), fx.base, ["tests/test_a.py::test_a"])
+    _, result = phase(fx)
+    assert len(result.findings) == 1, extra
+    assert result.failed()
+
+
 def test_command_over_its_timeout_couldnt_run(make_repo: MakeRepo) -> None:
     template = one_liner("import time; time.sleep(30)")
     fx = repo_with(make_repo, [template], timeout=1)
@@ -303,6 +336,7 @@ def test_parse_failed_tests_reads_pytest_and_vitest() -> None:
     assert parse_failed_tests(PYTEST_SUMMARY) == (
         "tests/test_a.py::test_two",
         "tests/test_b.py::test_param[x-1]",
+        "tests/test_c.py",
     )
     assert parse_failed_tests(VITEST_OUTPUT) == (
         "src/review/beatSlots.test.ts > subBeatSeparators > marks a 3:1 split",

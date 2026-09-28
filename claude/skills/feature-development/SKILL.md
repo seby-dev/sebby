@@ -220,7 +220,10 @@ following table sets each role:
 | Explore and other read-only agents | `reader` | Sonnet 5 | low |
 
 No review uses a Fable model (decided 2026-09-23). A repo's own CLAUDE.md can
-override any row.
+override a row only by naming that row. A blanket rule such as "read-only agents run
+on Sonnet" doesn't reach the advisor, `wave-reviewer-domain`, or `branch-reviewer`:
+dispatch those by their typed agent with no `model`, since an explicit `model`
+overrides the agent's own pin.
 
 **Why:** a reviewer sharing context with the author inherits the author's blind
 spots. Now that the advisor runs on the same model as the author, the fresh

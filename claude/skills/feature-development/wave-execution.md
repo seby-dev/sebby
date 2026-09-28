@@ -55,8 +55,10 @@ implementer's self-review stays.
    `.review.toml`, it first runs the repository's own targeted gates (lint, type-check,
    and the tests for the files it touched), because there `revgate task` runs no gate
    and every rule is in shadow.
-2. The implementer runs `revgate task --role implementer` in the foreground, with the
-   Bash tool's `timeout: 600000`, before it reports DONE. On a blocking finding, it fixes
+2. The implementer runs `revgate task --role implementer` with the Bash tool's
+   `run_in_background: true` before it reports DONE, because a project's gates can
+   together outlast the 10-minute foreground limit. If `revgate` is stopped anyway, it
+   kills the running gate's process group before it exits. On a blocking finding, it fixes
    and re-runs at most twice. After two failed re-runs, see "Adjudication".
 3. The controller re-runs `revgate task --role controller` on the reported head. This run
    is authoritative, and the result cache makes it take about a second when nothing
@@ -180,10 +182,16 @@ one `adjudicator`. It rules once on every open blocking finding of that task and
 each ruling:
 
 ```
-revgate mark <id> tp|fp --ruling --note "<reason>"
+revgate mark <id> tp|fp --ruling --plan <plan> --note "<reason>"
 ```
 
-A ruling is a justified suppression, a plan ruling, or a ruling for the wave reviewer to
+`--plan` names the plan whose ledger the ruling lands in; without it the command exits
+2 and records nothing. An `fp` ruling explains the finding on the controller's next run,
+so the adjudicator doesn't add a suppression comment (`revgate` reads no
+`revgate-ignore` marker). If a ruling does change a file, the adjudicator commits it
+before replying, because `revgate task` exits 2 on uncommitted changes.
+
+A ruling is a false positive, a plan ruling, or a ruling for the wave reviewer to
 confirm, which sets the task's `focus`. If a task has more than five blocking findings
 after its first round, don't adjudicate: the controller takes the task back as likely
 mis-scoped and fixes the plan or re-splits the task.

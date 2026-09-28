@@ -435,6 +435,11 @@ _TS_SUPPRESSION_RE = re.compile(r"eslint-disable|@ts-expect-error|@ts-ignore|\ba
 # filesystem race`), or a second comment that isn't itself a marker (`# type:
 # ignore[assignment]  # shadows tuple.index`). A bare error code is never a reason.
 _REASON_RE = re.compile(r"(?:--|—|\s-\s|#(?!\s*(?:noqa\b|type:\s*ignore\b|pragma:)))\s*[A-Za-z]")
+# TypeScript adds a trailing `// why` comment that isn't itself a directive.
+_TS_REASON_RE = re.compile(r"(?:--|—|\s-\s|//(?!\s*(?:eslint-|@ts-)))\s*[A-Za-z]")
+# After `@ts-expect-error` or `@ts-ignore`, the directive's own text is the reason, with or
+# without a colon, when it holds a word (`TS2322` alone is a code, not a reason).
+_TS_DIRECTIVE_REASON_RE = re.compile(r"^\s*:?\s*(?=[^\n]*[a-z]{2})\S")
 
 
 def _suppression_re(path: str) -> re.Pattern[str] | None:
@@ -443,9 +448,6 @@ def _suppression_re(path: str) -> re.Pattern[str] | None:
     if path.endswith(_TS_EXT):
         return _TS_SUPPRESSION_RE
     return None
-
-
-_TS_STRING_RE = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"|`(?:[^`\\]|\\.)*`")
 
 
 def _py_comment_columns(text: str | None) -> dict[int, int] | None:
@@ -463,29 +465,109 @@ def _py_comment_columns(text: str | None) -> dict[int, int] | None:
     return out
 
 
-def _ts_code_end(line: str) -> int:
-    """Where a TypeScript line's code ends: at a `//` comment outside a string."""
-    blanked = _TS_STRING_RE.sub(lambda m: " " * len(m.group(0)), line)
-    cut = blanked.find("//")
-    return len(line) if cut < 0 else cut
+def _ts_char_classes(text: str) -> list[str]:
+    """Each line of a TypeScript file as one class letter per character: `c` code, `m`
+    comment (`//`, `/* */`, and JSDoc, across lines), `s` string or template literal. A
+    lexical scan, not a parse: a regex literal holding a quote or `//` can misclassify the
+    rest of its line."""
+    out: list[str] = []
+    state = "c"  # c code, l line comment, b block comment, or the open quote character
+    for line in text.splitlines():
+        classes: list[str] = []
+        i = 0
+        if state == "l":
+            state = "c"
+        while i < len(line):
+            ch, nxt = line[i], line[i + 1 : i + 2]
+            if state == "c":
+                if ch == "/" and nxt == "/":
+                    state = "l"
+                    classes.extend("m" * (len(line) - i))
+                    break
+                if ch == "/" and nxt == "*":
+                    state = "b"
+                    classes.extend("mm")
+                    i += 2
+                    continue
+                if ch in "'\"`":
+                    state = ch
+                    classes.append("s")
+                else:
+                    classes.append("c")
+            elif state == "b":
+                if ch == "*" and nxt == "/":
+                    state = "c"
+                    classes.extend("mm")
+                    i += 2
+                    continue
+                classes.append("m")
+            else:
+                classes.append("s")
+                if ch == "\\":
+                    classes.append("s")
+                    i += 2
+                    continue
+                if ch == state:
+                    state = "c"
+            i += 1
+        if state in "'\"":
+            state = "c"  # an unterminated one-line string ends with its line
+        out.append("".join(classes[: len(line)]))
+    return out
 
 
-def _real_markers(
-    path: str, line: str, markers: list[re.Match[str]], comment_col: int | None, parsed: bool
-) -> list[re.Match[str]]:
-    """The markers that suppress something: a Python marker in a comment, and `as any` in
-    TypeScript code (the other TypeScript markers are comment directives already)."""
+@dataclass(frozen=True)
+class _Marker:
+    kind: str  # the marker without spacing, hashes, or case, so spellings of one match
+    text: str
+    end: int  # column after the marker on its line
+
+
+def _kind(marker: str) -> str:
+    return re.sub(r"[\s#]", "", marker).lower()
+
+
+def _file_markers(path: str, text: str | None) -> dict[int, list[_Marker]]:
+    """The markers that suppress something, by line: a Python marker in a comment, `as
+    any` in TypeScript code, and a TypeScript directive in a comment."""
+    pattern = _suppression_re(path)
+    if pattern is None or text is None:
+        return {}
+    lines = _lines(text)
+    out: dict[int, list[_Marker]] = {}
     if path.endswith(_PY_EXT):
-        if not parsed:
-            return markers
-        return [m for m in markers if comment_col is not None and m.start() >= comment_col]
-    end = _ts_code_end(line)
-    blanked = _TS_STRING_RE.sub(lambda m: " " * len(m.group(0)), line)
-    return [
-        m
-        for m in markers
-        if not m.group(0).startswith("as") or (m.start() < end and blanked[m.start()] == "a")
-    ]
+        columns = _py_comment_columns(text)
+        for n, line in enumerate(lines, start=1):
+            col = columns.get(n) if columns is not None else None
+            found = [
+                m
+                for m in pattern.finditer(line)
+                if columns is None or (col is not None and m.start() >= col)
+            ]
+            if found:
+                out[n] = [_Marker(_kind(m.group(0)), m.group(0), m.end()) for m in found]
+        return out
+    classes = _ts_char_classes(text)
+    for n, line in enumerate(lines, start=1):
+        cls = classes[n - 1] if n - 1 < len(classes) else ""
+        found = []
+        for m in pattern.finditer(line):
+            where = cls[m.start()] if m.start() < len(cls) else "c"
+            wanted = "c" if m.group(0).startswith("as") else "m"
+            if where == wanted:
+                found.append(m)
+        if found:
+            out[n] = [_Marker(_kind(m.group(0)), m.group(0), m.end()) for m in found]
+    return out
+
+
+def _has_reason(path: str, marker: _Marker, line: str) -> bool:
+    rest = line[marker.end :]
+    if path.endswith(_PY_EXT):
+        return _REASON_RE.search(rest) is not None
+    if marker.kind.startswith("@ts-") and _TS_DIRECTIVE_REASON_RE.search(rest):
+        return True
+    return _TS_REASON_RE.search(rest) is not None
 
 
 def _suppression_findings(
@@ -493,40 +575,36 @@ def _suppression_findings(
     changes: list[tuple[str, str, str | None]],
     head_hunks: Mapping[str, tuple[tuple[int, int], ...]],
 ) -> tuple[list[Finding], bool]:
+    """A marker is added when its file gains one of its kind: the fork's markers that the
+    tip's untouched lines no longer hold were edited or moved, and they cover the same
+    number of markers on added lines, in line order. So editing a line that keeps its
+    marker adds nothing, and a new marker beside an untouched one does."""
     out: list[Finding] = []
     added_any = False
     for letter, path, old in changes:
-        pattern = _suppression_re(path)
-        if pattern is None or letter == "D" or path not in head_hunks:
+        if _suppression_re(path) is None or letter == "D" or path not in head_hunks:
             continue
-        existing = Counter(
-            line.strip()
-            for line in _lines(trees.fork(old or path) if letter != "A" else None)
-            if pattern.search(line)
-        )
+        added = _added_lines(head_hunks[path])
+        fork = _file_markers(path, trees.fork(old or path) if letter != "A" else None)
         tip_text = trees.tip(path)
+        tip = _file_markers(path, tip_text)
         tip_lines = _lines(tip_text)
-        columns = _py_comment_columns(tip_text) if path.endswith(_PY_EXT) else None
-        for n in sorted(_added_lines(head_hunks[path])):
-            if n > len(tip_lines):
-                continue
-            line = tip_lines[n - 1]
-            markers = _real_markers(
-                path,
-                line,
-                list(pattern.finditer(line)),
-                columns.get(n) if columns is not None else None,
-                columns is not None,
-            )
-            if not markers:
-                continue
-            if existing[line.strip()] > 0:
-                existing[line.strip()] -= 1
+        budget = Counter(m.kind for ms in fork.values() for m in ms)
+        budget.subtract(m.kind for n, ms in tip.items() if n not in added for m in ms)
+        for n in sorted(n for n in tip if n in added):
+            new: list[_Marker] = []
+            for m in tip[n]:
+                if budget[m.kind] > 0:
+                    budget[m.kind] -= 1
+                else:
+                    new.append(m)
+            if not new:
                 continue
             added_any = True
-            unjustified = [m for m in markers if not _REASON_RE.search(line[m.end() :])]
+            line = tip_lines[n - 1]
+            unjustified = [m for m in new if not _has_reason(path, m, line)]
             if unjustified:
-                marker = unjustified[0].group(0)
+                marker = unjustified[0].text
                 out.append(
                     _finding(
                         "policy.unjustified_suppression",

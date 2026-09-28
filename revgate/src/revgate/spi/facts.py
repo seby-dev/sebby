@@ -96,6 +96,9 @@ class IsinstanceBranch:
     classes: tuple[str, ...]  # dotted class expressions as written
     line: int
     negated: bool
+    # The test was an `and` whose first operand is the isinstance call, so the branch can be
+    # skipped for an instance of its classes; it never shadows a later branch.
+    guarded: bool = False
 
 
 @dataclass(frozen=True)

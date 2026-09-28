@@ -68,19 +68,33 @@ def _strength(f: Finding) -> tuple[object, ...]:
     return (f.grade, _IMPACT_ORDER[f.impact], *sort_key(f))
 
 
-def cluster(findings: Sequence[Finding]) -> list[Finding]:
-    """One finding per anchor: the strongest (lowest grade, then impact), with the other
-    findings' rules listed in `also` as corroboration."""
+def cluster(findings: Sequence[Finding]) -> tuple[list[Finding], list[Finding]]:
+    """`(heads, absorbed)`: findings at one anchor cluster across rules as corroboration,
+    at most one finding per rule in a cluster, so two findings of one rule stay separate.
+    Each cluster's head is its strongest member (lowest grade, then impact) and lists the
+    others' rules in `also`; each absorbed member keeps status "clustered" and points at
+    its head through `absorbed_by`, so the run file and the log still carry it."""
     groups: dict[str, list[Finding]] = {}
     for f in findings:
         groups.setdefault(Anchor.of(f.file, f.symbol, f.line).key(), []).append(f)
     heads: list[Finding] = []
+    absorbed: list[Finding] = []
     for members in groups.values():
-        head = min(members, key=_strength)
-        others = {m.rule for m in members if m is not head} | set(head.also)
-        others.discard(head.rule)
-        heads.append(dataclasses.replace(head, also=tuple(sorted(others))))
-    return heads
+        clusters: list[list[Finding]] = []
+        for f in sorted(members, key=_strength):
+            home = next((c for c in clusters if all(m.rule != f.rule for m in c)), None)
+            if home is None:
+                clusters.append([f])
+            else:
+                home.append(f)
+        for head, *rest in clusters:
+            others = {m.rule for m in rest} | set(head.also)
+            others.discard(head.rule)
+            heads.append(dataclasses.replace(head, also=tuple(sorted(others))))
+            absorbed.extend(
+                dataclasses.replace(m, status="clustered", absorbed_by=head.id) for m in rest
+            )
+    return heads, absorbed
 
 
 def decide(
@@ -99,7 +113,8 @@ def decide(
     """The verdict: explain or acknowledge, route, cluster per tier, focus, and order.
 
     Routing runs before clustering, and clustering stays inside a tier, so a stronger
-    advisory or shadow finding never absorbs a blocking one at the same anchor.
+    advisory or shadow finding never absorbs a blocking one at the same anchor. Blocking
+    findings never cluster at all: each is a fix the implementer must see and make.
     """
     routed: list[Finding] = []
     for f in findings:
@@ -114,7 +129,13 @@ def decide(
     rest = [f for f in routed if f.status not in ("open", "acknowledged")]
     heads: list[Finding] = []
     for tier in Tier:
-        heads.extend(cluster([f for f in live if f.tier is tier]))
+        members = [f for f in live if f.tier is tier]
+        if tier is Tier.BLOCKING:
+            heads.extend(members)
+            continue
+        tier_heads, absorbed = cluster(members)
+        heads.extend(tier_heads)
+        rest.extend(absorbed)
     focus, reasons = focus_flags(heads, focus_inputs, cfg)
     return Verdict(
         findings=tuple(sorted(heads + rest, key=sort_key)),

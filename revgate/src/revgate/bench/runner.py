@@ -350,6 +350,9 @@ class _Review:
     outputs: tuple[RuleOutput, ...]  # as the rules produced them, for determinism checks
     seconds: float
     config_note: str
+    # A rule that crashed or that the budget skipped: its silence proves nothing, so any
+    # check reading this review fails with these.
+    rule_problems: tuple[str, ...] = ()
 
 
 def _review(
@@ -371,7 +374,7 @@ def _review(
     else:
         scope = TaskScope(None, extra, frozenset())
     start = time.monotonic()
-    outputs, _ctx, _ratchet = review_static(
+    phase = review_static(
         repo,
         base,
         head,
@@ -383,9 +386,18 @@ def _review(
         overrides=overrides,
     )
     seconds = time.monotonic() - start
+    outputs = phase.outputs
     findings = tuple(route(o, env.tiers, cfg, scope) for o in outputs if isinstance(o, Finding))
     obligations = tuple(o for o in outputs if isinstance(o, Obligation))
-    return _Review(findings, obligations, tuple(outputs), seconds, note)
+    problems = tuple(
+        [f"rule {name} crashed: {err}" for name, err in sorted(phase.rule_errors.items())]
+        + [
+            f"rule {n.removeprefix('skipped: budget:')} skipped by the budget"
+            for n in phase.budget_notes
+            if n.startswith("skipped: ")
+        ]
+    )
+    return _Review(findings, obligations, tuple(outputs), seconds, note, problems)
 
 
 def _describe(f: Finding) -> str:
@@ -519,7 +531,7 @@ def _expect_text(e: Expect) -> str:
 
 def check_replay(replay: Replay, review: _Review) -> list[str]:
     """Every way the replay's outputs differ from what its case expects."""
-    problems: list[str] = []
+    problems: list[str] = list(review.rule_problems)
     for e in replay.expect:
         if not any(_expect_matches(e, f) for f in review.findings):
             near = [_describe(f) for f in review.findings if f.rule == e.rule][:2]
@@ -628,6 +640,7 @@ def _run_corpus(case: Case, env: _Env, cache: BlobCache) -> tuple[bool, list[str
         review = _review(
             env, case.repo, base, commit, config_rev=case.config_rev, cache=cache, owns=owns
         )
+        problems.extend(f"! at {commit[:9]}: {p}" for p in review.rule_problems)
         for f in review.findings:
             if any(_silent_matches(s, f) for s in silents):
                 problems.append(f"! not silent at {commit[:9]}: {_describe(f)}")
@@ -770,6 +783,7 @@ def _run_plan_edges(case: Case, env: _Env, cache: BlobCache) -> tuple[bool, list
         )
         cfg, _note = env.config(case.repo, base, case.config_rev)
         label = f"{plan_path.rsplit('/', 1)[-1]} Task {task} {base[:9]}..{tip[:9]}"
+        problems.extend(f"! {label}: {p}" for p in review.rule_problems)
         for f in review.findings:
             if f.tier is Tier.BLOCKING:
                 judge.blocking(tip, label, f)
@@ -928,13 +942,15 @@ def _run_delivery(case: Case, env: _Env, cache: BlobCache) -> tuple[bool, list[s
             delivered_any.append(rid)
     frr_task, frr_any = task_w / total, any_w / total
     missing = [m for m in must if m not in delivered_task]
+    rule_problems = sorted({p for r in reviews.values() for p in r.rule_problems})
     details = [
         f"FRR_delivered_task {frr_task:.3f} ({', '.join(delivered_task) or 'none'}); "
         f"FRR_delivered_any {frr_any:.3f} ({', '.join(delivered_any) or 'none'}); "
         f"replayed {replayed}/{len(rows)}, weight {total:g}",
         *(f"! {m} didn't reach the implementer" for m in missing),
+        *(f"! {p}" for p in rule_problems),
     ]
-    return not missing, details
+    return not missing and not rule_problems, details
 
 
 # --- running ----------------------------------------------------------------------------------
