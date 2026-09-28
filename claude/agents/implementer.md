@@ -27,7 +27,9 @@ conversation history; the plan section the prompt names is your brief.
    every rule in shadow, so it can't catch a failing check for you.
 2. Run `revgate task --repo <wt> --base <fork> --head $(git -C <wt> rev-parse HEAD)
    --role implementer --plan <plan> --task <id>` with the Bash tool's
-   `timeout: 600000`.
+   `run_in_background: true`, and read its output when it finishes. Its gates can
+   together outlast the Bash tool's 10-minute foreground limit, and a foreground
+   timeout stops `revgate` before it writes a run file.
 3. Fix every blocking finding and re-run, at most twice. Never suppress, skip, or
    weaken a test to clear a finding.
 4. If you dispute a finding, answer it in the report's `revgate-responses` block.

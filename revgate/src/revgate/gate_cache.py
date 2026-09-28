@@ -67,12 +67,44 @@ def _locked(path: Path) -> Iterator[None]:
             fcntl.flock(fh, fcntl.LOCK_UN)
 
 
-def _execute(argv: Sequence[str], cwd: Path, err: TextIO) -> int:
+_FORWARDED = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+@contextmanager
+def _kill_on_termination(proc: subprocess.Popen[bytes]) -> Iterator[None]:
+    """While the gate runs, a SIGTERM, SIGINT, or SIGHUP to revgate kills the gate's
+    process group before revgate exits, so a harness that times revgate out never leaves
+    an orphaned mypy or pytest behind. Outside the main thread signals can't be caught,
+    and nothing changes."""
     try:
-        return subprocess.run(list(argv), cwd=cwd).returncode
+        previous = {sig: signal.getsignal(sig) for sig in _FORWARDED}
+
+        def handler(signum: int, _frame: object) -> None:
+            _kill_group(proc.pid)
+            raise SystemExit(128 + signum)
+
+        for sig in _FORWARDED:
+            signal.signal(sig, handler)
+    except ValueError:  # not the main thread
+        yield
+        return
+    try:
+        yield
+    finally:
+        for sig, old in previous.items():
+            signal.signal(sig, old)
+
+
+def _execute(argv: Sequence[str], cwd: Path, err: TextIO) -> int:
+    # Its own process group (not a new session, so it keeps the terminal) lets revgate
+    # kill the command and everything it started when revgate itself is stopped.
+    try:
+        proc = subprocess.Popen(list(argv), cwd=cwd, process_group=0)
     except (FileNotFoundError, PermissionError) as exc:
         print(f"gate-if-changed: couldn't run {argv[0]!r}: {exc}", file=err)
         return 2
+    with _kill_on_termination(proc):
+        return proc.wait()
 
 
 def run_gate_if_changed(
@@ -125,9 +157,17 @@ def run_gate_if_changed(
         start = time.monotonic()
         code = _execute(argv, cwd, err)
         duration = time.monotonic() - start
-        _store(entry_path, key, argv, code == 0, duration, clock())
+        passed = code == 0 and _tree_unchanged(top, key, state)
+        _store(entry_path, key, argv, passed, duration, clock())
         append_jsonl_locked(log_path, _log_row(clock(), key, argv, False, code, duration, 0))
         return code
+
+
+def _tree_unchanged(top: Path, key: GateKey, state: Path) -> bool:
+    """Whether the working tree still hashes to the key's tree after the command ran. An
+    edit during the run (the command's own, an agent's, or another gate's) means the pass
+    covers no single tree, so it isn't stored."""
+    return worktree_tree_hash(top, state / "scratch") == key.tree
 
 
 def _store(
@@ -183,7 +223,8 @@ def _capture(argv: Sequence[str], cwd: Path, timeout_s: int) -> GateRun:
         msg = f"gate-if-changed: couldn't run {argv[0]!r}: {exc}\n"
         return GateRun("couldnt_run", None, msg, time.monotonic() - start)
     try:
-        raw, _ = proc.communicate(timeout=timeout_s)
+        with _kill_on_termination(proc):
+            raw, _ = proc.communicate(timeout=timeout_s)
     except subprocess.TimeoutExpired:
         _kill_group(proc.pid)
         try:
@@ -246,7 +287,8 @@ def run_gate_capture(
             append_jsonl_locked(log_path, _log_row(clock(), key, argv, True, 0, 0.0, saved))
             return GateRun("cached", 0, line, 0.0)
         run = _capture(argv, cwd, timeout_s)
-        _store(entry_path, key, argv, run.status == "passed", run.duration_s, clock())
+        passed = run.status == "passed" and _tree_unchanged(top, key, state)
+        _store(entry_path, key, argv, passed, run.duration_s, clock())
         code = run.exit if run.exit is not None else -1
         append_jsonl_locked(log_path, _log_row(clock(), key, argv, False, code, run.duration_s, 0))
         return run

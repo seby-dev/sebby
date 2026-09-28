@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import io
+import os
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -192,3 +195,60 @@ def test_stats_reports_hit_rate(git_repo: Path, tmp_path: Path) -> None:
     out = io.StringIO()
     assert gate_stats(git_repo, out=out) == 0
     assert "1/2" in out.getvalue()
+
+
+def test_an_edit_during_the_run_stores_no_pass(git_repo: Path, tmp_path: Path) -> None:
+    # The command edits a tracked file while it runs, so it never checked the tree the key
+    # names. Reverting to that tree must run the command again, not report a cached pass.
+    counter = tmp_path / "counter"
+    code = (
+        "import pathlib, sys; p = pathlib.Path(sys.argv[1]); "
+        "p.write_text((p.read_text() if p.exists() else '') + 'x'); "
+        "pathlib.Path('a.txt').write_text('edited\\n')"
+    )
+    argv = [sys.executable, "-c", code, str(counter)]
+    assert gate(git_repo, argv)[0] == 0
+    (git_repo / "a.txt").write_text("alpha\n")
+    assert gate(git_repo, argv)[0] == 0
+    assert runs(counter) == 2
+
+
+@pytest.mark.parametrize("via", ["gate-if-changed", "capture"])
+def test_a_terminated_revgate_kills_its_gate(git_repo: Path, tmp_path: Path, via: str) -> None:
+    pid_file = tmp_path / "gate.pid"
+    child = (
+        "import os, pathlib, sys, time; "
+        "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(60)"
+    )
+    gate_argv = [sys.executable, "-c", child, str(pid_file)]
+    if via == "gate-if-changed":
+        argv = [sys.executable, "-m", "revgate", "gate-if-changed", "--", *gate_argv]
+    else:
+        driver = (
+            "import sys; from pathlib import Path; "
+            "from revgate.gate_cache import run_gate_capture; "
+            "run_gate_capture(sys.argv[1:], cwd=Path('.'), timeout_s=120)"
+        )
+        argv = [sys.executable, "-c", driver, *gate_argv]
+    proc = subprocess.Popen(argv, cwd=git_repo)
+    deadline = time.monotonic() + 30
+    while not pid_file.exists() or not pid_file.read_text():
+        assert time.monotonic() < deadline, "the gate never started"
+        time.sleep(0.05)
+    gate_pid = int(pid_file.read_text())
+    proc.send_signal(signal.SIGTERM)
+    assert proc.wait(timeout=15) != 0
+    deadline = time.monotonic() + 10
+    while _alive(gate_pid):
+        assert time.monotonic() < deadline, "the gate outlived revgate"
+        time.sleep(0.05)
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    # A zombie still answers kill(0); ps says whether it has exited.
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+    return bool(state.stdout.strip()) and not state.stdout.strip().startswith("Z")
