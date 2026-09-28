@@ -429,6 +429,10 @@ def _run_task(args: TaskArgs, out: TextIO) -> int:
         scope = TaskScope(args.task, frozenset(), frozenset())
     pth = plan_task_hash(plan) if plan is not None else None
     src = source_hash()
+    # The gates run on the working tree, so the key holds its tree (untracked, non-ignored
+    # files included: an untracked root config can change what a gate checks), and the
+    # report the static phase reads, by path and content.
+    tree = None if args.role == "bench" else gitio.worktree_tree_hash(top, state / "tmp")
     key = canonical(
         {
             "base": base,
@@ -437,6 +441,11 @@ def _run_task(args: TaskArgs, out: TextIO) -> int:
             "config_hash": cfg.config_hash,
             "version": __version__,
             "source_hash": src,
+            "tree": tree,
+            "report": report.path if report is not None else None,
+            "report_sha256": (
+                hashlib.sha256(report.text.encode()).hexdigest() if report is not None else None
+            ),
         }
     )
     meta: dict[str, object] = {

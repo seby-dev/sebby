@@ -200,6 +200,30 @@ def test_run_file_deterministic(make_repo: MakeRepo) -> None:
     assert _meta(fx)["run_cache"] == "hit"
 
 
+def test_an_untracked_file_misses_the_run_cache(make_repo: MakeRepo) -> None:
+    # An untracked root config file (outside the prod and test globs) can change what the
+    # gates check, so a run in a tree that holds one can't share another tree's result.
+    fx = _blocking_repo(make_repo)
+    _run(fx, plan=PLAN_PATH, task="T1")
+    (fx.path / "pytest.ini").write_text("[pytest]\naddopts = -k nothing\n", encoding="utf-8")
+    _run(fx, plan=PLAN_PATH, task="T1")
+    assert _meta(fx)["run_cache"] == "miss"
+    _run(fx, plan=PLAN_PATH, task="T1")
+    assert _meta(fx)["run_cache"] == "hit"
+
+
+def test_a_different_report_misses_the_run_cache(make_repo: MakeRepo, tmp_path: Path) -> None:
+    fx = _blocking_repo(make_repo)
+    first, second = tmp_path / "a.md", tmp_path / "b.md"
+    first.write_text("# Report\n", encoding="utf-8")
+    second.write_text("# Report\n\nDisclosed: `kind`\n", encoding="utf-8")
+    _run(fx, plan=PLAN_PATH, task="T1", report=first)
+    _run(fx, plan=PLAN_PATH, task="T1", report=second)
+    assert _meta(fx)["run_cache"] == "miss"
+    _run(fx, plan=PLAN_PATH, task="T1", report=second)
+    assert _meta(fx)["run_cache"] == "hit"
+
+
 def test_blocking_finding_end_to_end(make_repo: MakeRepo) -> None:
     fx = _blocking_repo(make_repo)
     code, text = _run(fx, plan=PLAN_PATH, task="T1", role="controller")
