@@ -64,6 +64,14 @@ def listing(folder: Path) -> list[str]:
     return sorted(p.name for p in folder.iterdir())
 
 
+def lock_owner(folder: Path) -> str:
+    """Who holds go.lock: a symlink to the owner's name, or an older directory lock."""
+    lock = folder / "go.lock"
+    if lock.is_symlink():
+        return os.readlink(lock)
+    return (lock / "owner").read_text().strip()
+
+
 @pytest.mark.parametrize("trial", range(10))
 def test_five_concurrent_waiters_are_all_released_by_one_decider(
     tmp_path: Path, trial: int
@@ -72,7 +80,8 @@ def test_five_concurrent_waiters_are_all_released_by_one_decider(
     codes = finish([start(tmp_path, name, 5) for name in names])
     assert codes == [0] * 5
     go = fields(tmp_path / "go")
-    owner = (tmp_path / "go.lock" / "owner").read_text().strip()
+    assert (tmp_path / "go.lock").is_symlink()  # the lock and its owner, one atomic step
+    owner = lock_owner(tmp_path)
     assert owner in names and go["by"] == owner and go["count"] == "5"
     for name in names:
         assert (tmp_path / f"ready-{name}").is_file() and (tmp_path / f"acted-{name}").is_file()
@@ -163,7 +172,7 @@ def test_a_waiter_stopped_by_a_signal_abandons_the_barrier(
     assert (tmp_path / "ready-gone").exists()  # no withdrawal: the barrier is abandoned instead
     abandoned = fields(tmp_path / "abandoned")
     assert abandoned["by"] == "gone" and abandoned["reason"] == "signal"
-    assert (tmp_path / "go.lock" / "owner").read_text().strip() == "gone"
+    assert lock_owner(tmp_path) == "gone"
     # A second participant sees the abandoned barrier and exits at once, not at its timeout.
     began = time.monotonic()
     assert finish([start(tmp_path, "other", 2, 60)]) == [75]
@@ -198,6 +207,108 @@ def test_a_signaled_decider_that_holds_the_lock_writes_abandoned(
     proc.communicate(timeout=10)
     assert proc.returncode == 75
     assert fields(tmp_path / "abandoned")["by"] == "me" and not (tmp_path / "go").exists()
+
+
+def shim_dir(tmp_path: Path, tool: str, body: str) -> Path:
+    """A folder holding a `tool` shim, put first on PATH; `$REAL` runs the real tool."""
+    real = shutil.which(tool)
+    assert real is not None, tool
+    bin_dir = tmp_path / "shims"
+    bin_dir.mkdir(exist_ok=True)
+    shim = bin_dir / tool
+    shim.write_text(f"#!/bin/sh\nREAL={real}\n{body}\n")
+    shim.chmod(0o755)
+    return bin_dir
+
+
+def shim_path(bin_dir: Path) -> dict[str, str]:
+    return {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+
+
+# How a waiter reaches `claim`: as the decider once the count is met, or at its timeout.
+CLAIM_PATHS = {"count": (1, 60), "timeout": (2, 1)}
+
+
+@pytest.mark.parametrize("path", ["decider", "follower"])
+def test_a_waiter_stopped_while_writing_acted_drops_it_and_exits_75(
+    tmp_path: Path, path: str
+) -> None:
+    # The shim renames, then sleeps once the acted- file is in place: a TERM in that window
+    # arrives after the rename and before the waiter returns, so the action never ran.
+    body = (
+        'for last; do :; done\n"$REAL" "$@" || exit\ncase "${last##*/}" in acted-*) sleep 3 ;; esac'
+    )
+    env = shim_path(shim_dir(tmp_path, "mv", body))
+    folder = tmp_path / "barrier"
+    folder.mkdir()
+    count = 1 if path == "decider" else 2
+    proc = start(folder, "me", count, 60, env_extra=env)
+    others = [] if path == "decider" else [start(folder, "other", 2, 60, env_extra=env)]
+    wait_for(folder / "acted-me", 20)
+    proc.send_signal(signal.SIGTERM)
+    proc.communicate(timeout=20)
+    assert proc.returncode == 75
+    assert not (folder / "acted-me").exists()
+    assert finish(others) == [0] * len(others)
+    out = json.loads(run("spread", str(folder)).stdout)
+    assert out["outcome"] == "go" and "me" not in out["acted"]
+
+
+@pytest.mark.parametrize("path", sorted(CLAIM_PATHS))
+def test_a_process_group_signal_inside_the_lock_step_never_leaves_pending(
+    tmp_path: Path, path: str
+) -> None:
+    # The shim takes the lock, then sleeps: a TERM to the whole group kills it too, so `ln`
+    # reports a failure although the lock is now this waiter's.
+    lock_taken = tmp_path / "lock-taken"
+    body = f'"$REAL" "$@" && touch {lock_taken}\nsleep 3'
+    env = shim_path(shim_dir(tmp_path, "ln", body))
+    folder = tmp_path / "barrier"
+    folder.mkdir()
+    count, timeout = CLAIM_PATHS[path]
+    proc = subprocess.Popen(
+        ["bash", str(BARRIER), "wait", str(folder), "me", str(count), str(timeout)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={**os.environ, **env},
+        start_new_session=True,
+    )
+    wait_for(lock_taken, 20)
+    began = time.monotonic()
+    os.killpg(proc.pid, signal.SIGTERM)
+    proc.communicate(timeout=30)
+    assert time.monotonic() - began < 15  # not the timeout plus the grace period
+    assert proc.returncode == 75
+    assert lock_owner(folder) == "me"
+    out = json.loads(run("spread", str(folder)).stdout)
+    assert out["outcome"] in ("abandoned", "go"), out
+    if out["outcome"] == "abandoned":
+        assert fields(folder / "abandoned")["reason"] == "signal"
+    assert not (folder / "acted-me").exists()
+
+
+def test_a_parent_check_that_gets_eperm_keeps_waiting(tmp_path: Path) -> None:
+    # `kill -0` fails with EPERM for a live parent owned by another user: not an orphan.
+    eperm = (
+        '() { if [ "$1" = -0 ]; then echo "kill: ($2) - Operation not permitted" >&2;'
+        ' return 1; fi; builtin kill "$@"; }'
+    )
+    env = {"BASH_FUNC_kill%%": eperm}  # an exported function, which bash prefers to a builtin
+    result = run("wait", str(tmp_path), "a", "1", "5", env_extra=env)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "acted-a").is_file() and not (tmp_path / "abandoned").exists()
+
+
+def test_a_waiter_whose_parent_pid_was_reused_does_not_act(tmp_path: Path) -> None:
+    # The parent pid answers `kill -0`, but this waiter's parent is now someone else.
+    body = 'case "$*" in *ppid=*) echo "    1"; exit 0 ;; esac\nexec "$REAL" "$@"'
+    env = shim_path(shim_dir(tmp_path, "ps", body))
+    folder = tmp_path / "barrier"
+    folder.mkdir()
+    result = run("wait", str(folder), "a", "1", "5", env_extra=env)
+    assert result.returncode == 75 and "orphaned" in result.stderr
+    assert not (folder / "acted-a").exists()
 
 
 def barrier_pids(folder: Path) -> list[int]:
@@ -320,7 +431,7 @@ def test_the_date_clock_gives_whole_seconds_in_milliseconds(tmp_path: Path) -> N
 def test_a_forced_clock_that_fails_falls_back_to_date_not_epochrealtime(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for tool in ("bash", "date", "mv", "mkdir", "sleep", "rm"):
+    for tool in ("bash", "date", "mv", "ln", "readlink", "ps", "sleep", "rm"):
         found = shutil.which(tool)
         assert found is not None, tool
         (bin_dir / tool).symlink_to(found)
