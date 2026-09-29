@@ -285,6 +285,42 @@ def test_a_waiter_stopped_while_writing_acted_drops_it_and_exits_75(
     assert finish(others) == [0] * len(others)
     out = json.loads(run("spread", str(folder)).stdout)
     assert out["outcome"] == "go" and "me" not in out["acted"]
+    # It leaves a marker, so a forbidden re-run can't act late and alone.
+    assert (folder / "stopped-me").is_file() and out["stopped"] == ["me"]
+    again = run("wait", str(folder), "me", str(count), "5")
+    assert again.returncode == 75 and "stopped after the release" in again.stderr
+    assert not (folder / "acted-me").exists()
+    assert json.loads(run("spread", str(folder)).stdout)["acted"] == out["acted"]
+
+
+def test_a_rerun_whose_arrival_is_already_counted_in_go_refuses_to_act(tmp_path: Path) -> None:
+    """A waiter stopped while the decider was writing `go` left no marker; its ready- file
+    says it arrived, so a re-run of that name still doesn't act late and alone."""
+    (tmp_path / "ready-me").write_text("1700000000000\n")
+    (tmp_path / "go").write_text("released_ms=1700000000010 by=other count=2 clock=bash\n")
+    before = listing(tmp_path)
+    again = run("wait", str(tmp_path), "me", "2", "5")
+    assert again.returncode == 75 and "already arrived" in again.stderr
+    assert listing(tmp_path) == before
+
+
+def test_a_waiter_stopped_before_the_release_leaves_no_stopped_marker(tmp_path: Path) -> None:
+    proc = start(tmp_path, "me", 2, 60)
+    wait_for(tmp_path / "ready-me", 20)
+    proc.send_signal(signal.SIGTERM)
+    proc.communicate(timeout=20)
+    assert proc.returncode == 75 and (tmp_path / "abandoned").is_file()
+    assert not (tmp_path / "stopped-me").exists()
+    assert json.loads(run("spread", str(tmp_path)).stdout)["stopped"] == []
+
+
+def test_spread_lists_only_valid_stopped_names(tmp_path: Path) -> None:
+    (tmp_path / "go").write_text("released_ms=1 by=a count=2 clock=bash\n")
+    (tmp_path / "stopped-b").write_text("1700000000100\n")
+    (tmp_path / "stopped-a").write_text("1700000000050\n")
+    (tmp_path / 'stopped-x"y').write_text("1\n")  # a name that breaks JSON
+    out = json.loads(run("spread", str(tmp_path)).stdout)
+    assert out["stopped"] == ["a", "b"]
 
 
 @pytest.mark.parametrize("path", sorted(CLAIM_PATHS))
@@ -512,6 +548,7 @@ def test_spread_on_an_empty_folder_is_pending(tmp_path: Path) -> None:
         "spread_ms": None,
         "clock": None,
         "skipped": 0,
+        "stopped": [],
     }
 
 
