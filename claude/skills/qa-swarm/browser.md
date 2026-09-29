@@ -31,6 +31,14 @@ The state file holds the session cookie and the app's signed-in record, so the a
 
 Run `open` once per session. A second `open` restarts the session and drops its cookies and storage. To move to another page, use `goto`.
 
+## HTTPS origins
+
+A run started with `--caddy` has an `https://127.0.0.1:<port>` origin, signed by a certificate authority that lives and dies with the run. Your charter gives a `<browser config>` file. Pass it to the first `open` of each session, before the URL:
+
+    cd <run folder>/testers/<tester> && npm --prefix <cli folder> exec -- playwright-cli -s=<tester>-<n> open --config=<browser config> about:blank
+
+The file makes Chromium accept the run's certificate chain and no other (through `--ignore-certificate-errors-spki-list`), and blocks service workers, so every request reaches Caddy. Then `state-load` and `goto` work as usual. A page that fails with `net::ERR_CERT_AUTHORITY_INVALID` means the session opened without the config: close it and open it again. Never turn on a blanket switch such as `--ignore-certificate-errors`, and never load a certificate into a trust store. A run without Caddy has an `http://` origin and needs no config.
+
 ## Commands you'll use
 
 - `goto <url>` navigates; `snapshot` prints the page text with element refs.

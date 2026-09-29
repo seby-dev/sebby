@@ -64,11 +64,15 @@ def test_it_commits_only_passing_scenarios_and_reproduces_blockers_and_highs() -
         assert needle in text, needle
 
 
-def test_it_says_what_this_version_dispatches_and_doesnt_run() -> None:
+def test_it_says_what_this_version_dispatches_and_runs() -> None:
     text = body()
     assert "only `qa-tester`" not in text
     assert "dispatches `qa-tester` (" in text and "`adversarial-tester` (" in text
-    assert "It doesn't run security testers, load, or a Caddy layer yet." in text
+    assert "`security-tester` (an Opus 5.5 agent" in text
+    assert "It doesn't run security testers, load, or a Caddy layer yet." not in text
+    assert "dispatch qa-tester, adversarial-tester, and security-tester agents" in text
+    assert "runs `loadgen.py` beside a batch when the project enables load" in text
+    assert "a restart phase that checks what a restart keeps and clears" in text
 
 
 def test_it_uses_the_default_state_folder_and_lists_the_launcher_path_and_start_failures() -> None:
@@ -144,9 +148,10 @@ def test_shared_is_written_only_by_the_prepare_step_and_the_barrier() -> None:
 
 def test_the_step_numbers_the_last_line_cites_are_the_checking_steps() -> None:
     text = body()
-    assert "so steps 7 and 10 check after the fact." in text
+    assert "so steps 7 and 11 check after the fact." in text
     assert "7. When a batch finishes, run `git status --porcelain`" in text
-    assert "10. Merge and de-duplicate the findings" in text
+    assert "11. Merge and de-duplicate the findings" in text
+    assert "12. Run `scripts/qa_env.sh stop --run-dir <run folder>`" in text
 
 
 def test_after_the_batch_it_checks_released_count_against_the_acted_entries() -> None:
@@ -193,3 +198,140 @@ def test_a_mismatch_either_way_is_not_a_real_collision() -> None:
         "fewer means a participant arrived after the release",
     ):
         assert needle in text, needle
+
+
+def test_a_load_section_no_longer_stops_the_run() -> None:
+    text = body()
+    assert "or `[load] enabled` is on, stop" not in text
+    assert "`[load] enabled` doesn't stop the run" in text
+    assert "The `[load]` and `[security]` sections are optional too." in text
+
+
+def test_a_security_run_starts_with_caddy_and_says_what_a_missing_binary_does() -> None:
+    text = body()
+    for needle in (
+        "add `--caddy`",
+        "over `https://127.0.0.1:<port>`",
+        "`CADDY_BIN`, or `caddy` on the `PATH`",
+        "`start --caddy` exits 2 and starts nothing",
+        "report the header and CSP checks as skipped",
+        "`ca_file` and `browser_config` (with Caddy only)",
+        "`skipped_checks`",
+        "so don't dispatch a `qa-tester` on it",
+    ):
+        assert needle in text, needle
+
+
+def test_a_planted_backend_defect_uses_backend_root_and_the_guard_protects_it() -> None:
+    text = body()
+    assert "add `--backend-root <dir>`" in text
+    assert "the backend runs that checkout's `src/`" in text
+
+
+def test_loadgen_runs_beside_a_batch_only_when_load_is_enabled_and_within_its_caps() -> None:
+    text = body()
+    for needle in (
+        "When `[load] enabled` is true, run `loadgen.py` beside a batch",
+        '"${SEBBY_ROOT:-$HOME/Developer/sebby}/claude/skills/qa-swarm/loadgen.py"',
+        "--state <state file>",
+        "clamps to 8 concurrent requests, 20 a second, and 300 seconds",
+        "(exit 64)",
+        "(exit 3)",
+        "<run folder>/load/summary.json",
+        "With three testers in a batch, keep load off unless the user asks.",
+    ):
+        assert needle in text, needle
+    assert re.search(
+        r'python3 "\$\{SEBBY_ROOT:-\$HOME/Developer/sebby\}/claude/skills/qa-swarm/loadgen.py"',
+        text,
+    )
+
+
+def test_rate_limit_abuse_runs_last_and_alone() -> None:
+    text = body()
+    assert (
+        "Run rate-limit abuse in a final batch, alone, after every other tester has finished"
+        in text
+    )
+    assert "no `loadgen.py` beside it" in text
+    assert "whether it's the final abuse batch and the address to exhaust" in text
+
+
+def test_the_restart_phase_runs_after_every_tester_and_reports_kept_and_cleared() -> None:
+    text = body()
+    assert "8. Restart phase, for a security run, after every tester has finished" in text
+    for needle in (
+        "If `[security] restart` names a command",
+        "--probe-email <the address the abuse tester exhausted>",
+        "stops only the backend",
+        "same port, with the same key and data folders",
+        "`kept` (`spend_ledger`, `saved_runs`, and `shares`",
+        "`cleared` (`magic_link_limit` with `limited_before` and `mailed_after`",
+        "Exit 0 means the backend came back; exit 1 means it didn't",
+        "A `same` of `false` is a finding",
+        "`limited_before: false` means the address wasn't over its limit",
+        "`mailed_after: false` is a finding",
+        "Testers never run it.",
+    ):
+        assert needle in text, needle
+    assert text.index("8. Restart phase") > text.index("7. When a batch finishes")
+    assert text.index("8. Restart phase") < text.index("9. Copy each passing scenario draft")
+
+
+def test_the_report_has_the_held_and_restart_sections_and_names_skipped_checks() -> None:
+    text = body()
+    for needle in (
+        '"Attacks that held" section',
+        "every line of each security tester's `held.md`",
+        '"Restart phase" section',
+        "when `instance.json` says `caddy` is false",
+        "the `loadgen.py` summary if it ran",
+    ):
+        assert needle in text, needle
+
+
+def test_the_security_charter_carries_the_tls_files_the_backend_port_and_the_budget() -> None:
+    text = body()
+    for needle in (
+        "`ca_file` and `browser_config` when `caddy` is true",
+        '"no Caddy: skip headers and CSP" when it\'s false',
+        "the direct backend port (`http://127.0.0.1:<backend_port>`",
+        "its magic-link budget, its spare identity",
+        "the path of the repository whose source it may read",
+    ):
+        assert needle in text, needle
+
+
+def test_the_spare_identity_is_given_to_no_one_else() -> None:
+    text = body()
+    assert "Write a state file for the spare identity" in text
+    assert "give it to no one else" in text
+
+
+def test_the_raw_backend_url_is_the_one_exception_to_the_allowlist() -> None:
+    text = body()
+    assert (
+        "The one exception is the raw backend URL, which only a `security-tester` may use" in text
+    )
+    assert '"direct backend"' in text
+
+
+def test_the_cost_cap_probe_is_the_one_sanctioned_photo_read_and_runs_alone() -> None:
+    text = body()
+    for needle in (
+        "The one sanctioned photo read is a `security-tester`'s cost-cap probe",
+        "`STAFF2SOLFA_FORBID_BILLED=1` and holds no provider key",
+        "leaves a `vision_forbidden` line in the backend log for each read",
+        "only in a batch where that tester runs alone",
+        "it changes the seeded workspace's spend cap",
+        "whether it may run the cost-cap probe (only when it runs alone)",
+        "only in a batch where it runs alone, and say so in the charter",
+    ):
+        assert needle in text, needle
+
+
+def test_vision_forbidden_lines_from_the_probe_are_reported_as_expected() -> None:
+    text = body()
+    assert "the `vision_forbidden` lines that a `security-tester`'s cost-cap probe caused" in text
+    assert "are expected: report them as its probe's, with their count" in text
+    assert "not as a route that tried a billed call" in text
