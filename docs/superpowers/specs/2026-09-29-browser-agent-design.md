@@ -430,11 +430,24 @@ class TextModel(Protocol):
     async def text_for(self, request: TextRequest) -> str | None: ...
 ```
 
-The default `TextModel` wraps `sebby.llm.LLMClient`, which is synchronous and
-needs the `llm` extra. It runs the call through `asyncio.to_thread`, so a
-model call never blocks the event loop that the other actors share. jev used
-a DeepSeek model for this call. Returning `None` means the model found no
-valid value, and the step becomes `BLOCKED`. The engine never guesses.
+The default `TextModel` is Anthropic. It calls Claude Haiku 4.5
+(`claude-haiku-4-5-20251001`) through `sebby.llm.LLMClient`, which is
+synchronous. It runs the call through `asyncio.to_thread`, so a model call
+never blocks the event loop that the other actors share. The model ID is a
+setting, `SEBBY_BROWSER_TEXT_MODEL`, and a host can pass any other
+`TextModel`. jev used a DeepSeek model for this call. The key comes from
+`ANTHROPIC_API_KEY` in the environment the host provides, and the package
+reads no other source. Implementers load the `claude-api` skill before they
+write this code. Returning `None` means the model found no valid value, and
+the step becomes `BLOCKED`. The engine never guesses.
+
+**Keys belong to the host.** `sebby.browser` reads `TYPESAFE_API_KEY` and
+`ANTHROPIC_API_KEY` from its environment and nothing else. It doesn't open a
+`.env` file, and it doesn't look in another project. This follows a lesson
+from jev, whose key handling was an ad hoc step in each harness. The host
+decides where a key lives: staff2solfa reads the TypeSafe key from another
+project's `.env` by reference, and passes it to the process that runs the
+executor.
 
 **Step loop.** For a goal, until `DONE`, `BLOCKED`, or a cap:
 
@@ -830,7 +843,7 @@ pytest_plugins = ["sebby.browser.pytest_plugin"]
 ```
 
 The plugin imports nothing optional at module import time. `websockets`,
-`typesafe_sdk`, and `litellm` load inside the functions that use them, so a
+`typesafe_sdk`, and `litellm` (through `sebby.llm`) load inside the functions that use them, so a
 collection error can't come from a missing extra. It adds:
 
 - The `browser_agent` marker, which `@scenario` applies.
@@ -1107,7 +1120,7 @@ four times that value bounds replayed steps, so a loop can't run forever for
 free. `Result.message` lists each heal and refresh with its step and rung.
 
 **No secrets.** The adapter, like jev's, holds its own provider keys
-(`TYPESAFE_API_KEY`, and the text model's key if used). It never writes them
+(`TYPESAFE_API_KEY` and `ANTHROPIC_API_KEY`). It never writes them
 to `history`, `evidence`, or `message`. Values marked `secret=True` are
 masked in the history.
 
@@ -1153,17 +1166,18 @@ src/sebby/browser/
 ```toml
 browser = [
     "sebby[judgement]",
+    "sebby[llm]",
     "websockets>=13.0",
 ]
 ```
 
 `sebby[judgement]` brings `typesafe-sdk`, and with it `httpx2`, `msgspec`, and
-`tenacity`. The only new dependency is `websockets`. `pytest` isn't in the
-extra, because only a project that uses the DSL loads the plugin, and that
-project has pytest. The default text model needs the `llm` extra, which a
-project installs separately if it uses model-written text (see "Open
-questions"). The `dev` extra adds `sebby[browser]`. The package registers no
-`pytest11` entry point (see layer 4).
+`tenacity`. `sebby[llm]` brings `litellm`, which the default text model
+needs. The only dependency that no existing extra carries is `websockets`.
+`pytest` isn't in the extra, because only a project that uses the DSL loads
+the plugin, and that project has pytest. The `dev` extra adds
+`sebby[browser]`. The package registers no `pytest11` entry point (see layer
+4).
 
 ### Raw CDP over `websockets`, not Playwright
 
@@ -1194,13 +1208,28 @@ Chromium, so protocol drift fails a test and not a run. Playwright stays a
 possible fallback for the pool layer behind the `ActorBrowser` interface, if
 CDP churn costs too much.
 
-Chromium comes from `SEBBY_BROWSER_CHROMIUM`, or else the first match among
-common install paths and a Playwright browser cache. The package doesn't
-import Playwright and doesn't install a browser.
+The package finds a Chromium and doesn't install one, and it doesn't import
+Playwright. It looks in this order and uses the first match:
+
+1. `SEBBY_BROWSER_CHROMIUM`, an explicit path to the executable. It overrides
+   the other two sources. If it's set and the path doesn't exist, the lookup
+   fails and doesn't fall through.
+2. Playwright's installed Chromium: the newest `chromium-*` folder in
+   `PLAYWRIGHT_BROWSERS_PATH`, or in Playwright's default cache
+   (`~/Library/Caches/ms-playwright` on macOS, `~/.cache/ms-playwright` on
+   Linux, `%LOCALAPPDATA%\ms-playwright` on Windows). A
+   `PLAYWRIGHT_BROWSERS_PATH` of `0` means Playwright's package folder, which
+   the lookup doesn't search.
+3. System Google Chrome, at its standard path for the platform.
+
+If none is found, the lookup raises an error that names both options: install
+Playwright's Chromium (in staff2solfa, `make e2e-install`), or install Google
+Chrome, and set `SEBBY_BROWSER_CHROMIUM` to use a browser elsewhere. The
+integration tests skip when the lookup fails.
 
 ## Cost and budget controls
 
-TypeSafe calls are billed, and so are text-model calls. Controls apply at
+TypeSafe calls are billed, and so are text-model calls (Anthropic, by default). Controls apply at
 five points:
 
 - **Opt-in.** `--run-browser-agent` runs scenarios, and by default only in
@@ -1419,44 +1448,38 @@ Each item has a proposed answer, used in this spec until the user decides.
    `sebby-browser` declares `max_actors = 8`, and its adapter-placement text
    says 4. This spec uses 4. The comment in the swarm spec needs the same
    change.
-2. **The default text model.** The default `TextModel` needs `sebby[llm]`
-   (`litellm`), which the `browser` extra doesn't include. staff2solfa has it.
-   Should `browser` include `llm`, or should the extra stay minimal?
-3. **Chromium supply.** The package finds a Chromium and doesn't install one.
-   staff2solfa has Playwright's browsers from `make e2e-install`. Is that
-   the source to use, or should the package document a system Chrome?
-4. **Default numbers.** Similarity of 0.80 and 0.50, a heal cap of 3, a
+2. **Default numbers.** Similarity of 0.80 and 0.50, a heal cap of 3, a
    collision gap of 25 ms, a step latency budget of 5 seconds, a cold-load
    allowance of 15 seconds, a three-character minimum for an `ASSERT` literal,
    and a 64 MiB message limit are placeholders. Confirm or change them.
-5. **Middle-band, refresh, and ladder-heal rules.** The spec re-decides one
+3. **Middle-band, refresh, and ladder-heal rules.** The spec re-decides one
    step when the target is unique but the page similarity is between 0.50 and
    0.80. It reports a lower-rung resolution after a missing higher rung as a
    `refresh`, and after a role-plus-name collision as a heal with no model
    call. The agreed rules don't cover these cases.
-6. **Assertion authoring.** A model-chosen `ASSERT` accepts only a
+4. **Assertion authoring.** A model-chosen `ASSERT` accepts only a
    value-taking check whose expected value is a quoted literal from the goal.
    An `ASSERT` target that resolves to zero or several elements fails and
    doesn't heal. Is this stricter than intended?
-7. **The verified-goal rule.** Every recorded goal must end in an `ASSERT`, an
+5. **The verified-goal rule.** Every recorded goal must end in an `ASSERT`, an
    oracle or ledger check, or an external check, and a goal without one fails
    recording. That forces each scenario to check something after every goal.
    Is that the right strictness?
-8. **Billed-step counting.** `Cost.steps` counts model-decided steps only,
+6. **Billed-step counting.** `Cost.steps` counts model-decided steps only,
    so replays don't consume the swarm's `max_steps_total`. The interface
    says the budget counts "executor steps."
-9. **Collision reset.** `repeat` and `order="both"` need a host-supplied
+7. **Collision reset.** `repeat` and `order="both"` need a host-supplied
    `reset`, and they re-run each actor's prefix on a fresh page. Does
    staff2solfa's seeding support restoring one piece between iterations?
-10. **The popup default.** The popup policy defaults to `follow`. `block`
+8. **The popup default.** The popup policy defaults to `follow`. `block`
     is stricter, but a share link or a download link that opens a tab would
     then fail. Which default do you want?
-11. **The `Fetch` default.** The PAC file is the primary block, and `Fetch`
+9. **The `Fetch` default.** The PAC file is the primary block, and `Fetch`
     stays off when the canary shows the PAC file is active. Slice A measures
     the cost of `Fetch` against Vite. If the cost is small, should `Fetch`
     stay on as a second layer?
-12. **Acceptance threshold.** "Lower cost per run" has no number. A proposal:
+10. **Acceptance threshold.** "Lower cost per run" has no number. A proposal:
     a replay run makes at most one fifth of jev's `provider_calls` on the
     same batch.
-13. **Release tags.** The spec assumes one `sebby` tag per slice, following
+11. **Release tags.** The spec assumes one `sebby` tag per slice, following
     the current `v0.2.0`, but doesn't fix the numbers.
