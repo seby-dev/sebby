@@ -64,9 +64,11 @@ def test_it_commits_only_passing_scenarios_and_reproduces_blockers_and_highs() -
         assert needle in text, needle
 
 
-def test_it_says_what_this_version_doesnt_run() -> None:
+def test_it_says_what_this_version_dispatches_and_doesnt_run() -> None:
     text = body()
-    assert "only `qa-tester`" in text
+    assert "only `qa-tester`" not in text
+    assert "dispatches `qa-tester` (" in text and "`adversarial-tester` (" in text
+    assert "It doesn't run security testers, load, or a Caddy layer yet." in text
 
 
 def test_it_uses_the_default_state_folder_and_lists_the_launcher_path_and_start_failures() -> None:
@@ -80,3 +82,114 @@ def test_start_passes_a_web_root_and_reuses_a_running_instance() -> None:
     text = body()
     assert "--web-root <dir>" in text
     assert "already running" in text
+
+
+def test_it_prepares_each_collision_scenario_and_writes_a_target_file() -> None:
+    text = body()
+    for needle in (
+        "`[collisions]` section is optional",
+        "`prepare`",
+        "scripts/qa_env.sh collide",
+        "--scenario <id> --assign <slot>=<tester>",
+        "shared/<id>/target.json",
+        "schema in `collisions.md`",
+        "same batch",
+        "bash <skill folder>/barrier.sh wait <barrier.dir> <tester>",
+        "absolute path of this skill's folder",
+        "get into position",
+        "`timeout` set to 600000",
+        "never re-runs it",
+        "Dispatch a scenario's participants at once, in the same batch",
+        "a second scenario that consumes a resource an earlier one in this run already consumes",
+    ):
+        assert needle in text, needle
+
+
+def test_a_scenario_that_consumes_a_resource_runs_last_and_only_one_per_run() -> None:
+    text = body()
+    assert "`consumes` a resource" in text and "runs last" in text
+    assert "only one scenario that consumes a given resource runs in a run" in text
+    assert "re-seeding is out of scope" in text
+
+
+def test_only_the_adversarial_tester_joins_collisions_and_no_agent_takes_a_model() -> None:
+    text = body()
+    assert "Only `adversarial-tester` joins a collision scenario" in text
+    assert "each by its typed agent with no `model` override" in text
+
+
+def test_it_reports_the_spread_and_never_reports_abandoned_as_passed() -> None:
+    text = body()
+    for needle in (
+        'bash "${SEBBY_ROOT:-$HOME/Developer/sebby}/claude/skills/qa-swarm/barrier.sh"'
+        " spread <barrier.dir>",
+        "run `ls <run folder>/shared/<id>`",
+        '"Collision scenarios" section',
+        "`abandoned`",
+        "never as passed",
+    ):
+        assert needle in text, needle
+
+
+def test_shared_is_written_only_by_the_prepare_step_and_the_barrier() -> None:
+    text = body()
+    assert (
+        "Only the orchestrator's prepare step and `barrier.sh` write in the run's `shared/` folder"
+        in text
+    )
+    assert "is written only by" not in text
+    assert "6. Write only to the tester's own folder in the run." in text
+    assert "doesn't catch a Bash write" in text and "step 7 lists each `shared/<id>`" in text
+
+
+def test_the_step_numbers_the_last_line_cites_are_the_checking_steps() -> None:
+    text = body()
+    assert "so steps 7 and 10 check after the fact." in text
+    assert "7. When a batch finishes, run `git status --porcelain`" in text
+    assert "10. Merge and de-duplicate the findings" in text
+
+
+def test_after_the_batch_it_checks_released_count_against_the_acted_entries() -> None:
+    text = body()
+    for needle in (
+        "Its `outcome` is authoritative, not a participant's exit code.",
+        "Its `released_count` must equal the number of `acted` entries",
+        "a SIGKILL, which can't be trapped",
+        'report that scenario as "not a real collision", not as passed',
+        "`abandoned`, or `not a real collision`",
+    ):
+        assert needle in text, needle
+
+
+def test_the_seed_makes_two_runs_one_with_a_share() -> None:
+    text = body()
+    assert "two seeded runs, one with a share and one without" in text
+    assert "one seeded run and share" not in text
+
+
+def test_the_charter_runs_the_collision_first_and_protects_other_scenarios_resources() -> None:
+    text = body()
+    for needle in (
+        "run its scenario first, right after it reads the charter and the guides,"
+        " before any free-form testing",
+        "never to change a resource that another scenario's `target.json` names",
+        "such as the seeded share or a seeded run",
+        "every other scenario's `target.json` path",
+    ):
+        assert needle in text, needle
+
+
+def test_scenarios_that_share_a_needs_resource_run_in_different_batches() -> None:
+    text = body()
+    assert "Scenarios that share a `needs` resource" in text
+    assert "run in different batches, never in the same batch" in text
+
+
+def test_a_mismatch_either_way_is_not_a_real_collision() -> None:
+    text = body()
+    for needle in (
+        "greater than the number of `acted` entries means a released participant never recorded"
+        " acting",
+        "fewer means a participant arrived after the release",
+    ):
+        assert needle in text, needle
