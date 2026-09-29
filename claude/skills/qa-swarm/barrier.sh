@@ -200,7 +200,8 @@ release() {
   [ -z "$ppid" ] || [ "$ppid" = "$PARENT" ] || stop_waiter orphaned
   now_ms
   write_atomic "$DIR/acted-$NAME" "$NOW_MS" || fail_io
-  trap - TERM INT HUP
+  # The trap stays set until the script exits: a signal now still drops acted- and exits 75,
+  # because the caller's action hasn't run yet.
   exit 0
 }
 
