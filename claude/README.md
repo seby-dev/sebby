@@ -8,10 +8,12 @@ tested, reviewed, and reverted like any other code:
   `wave-execution.md`.
 - `agents/`: the typed subagents (`drafter`, `implementer`, `implementer-risky`,
   `adjudicator`, `plan-advisor`, `wave-reviewer`, `wave-reviewer-domain`,
-  `branch-reviewer`, `researcher`, `reader`, and `qa-tester`). Each one pins its own
-  `model`, so a dispatch that names one never inherits the session's model.
-- `skills/qa-swarm/`: the QA swarm orchestrator skill and its guides (`browser.md`,
-  `scenarios.md`, and `report-format.md`).
+  `branch-reviewer`, `researcher`, `reader`, `qa-tester`, and `adversarial-tester`).
+  Each one pins its own `model`, so a dispatch that names one never inherits the
+  session's model.
+- `skills/qa-swarm/`: the QA swarm orchestrator skill, its guides (`browser.md`,
+  `scenarios.md`, `collisions.md`, and `report-format.md`), and `barrier.sh`, the file
+  barrier that collision scenarios use.
 - `hooks/`: the `PreToolUse` hooks, `agent_model_guard.py`, `cd_only_reminder.py`,
   and `qa_tester_guard.py`.
 - `settings-hooks.json`: the hook fragment that registers those hooks.
@@ -30,7 +32,8 @@ tested, reviewed, and reverted like any other code:
    `ln -s ~/Developer/sebby/claude/skills/qa-swarm ~/.claude/skills/qa-swarm`. If a
    real directory is already there, move it into the backup directory first. The
    agents need no step, because `~/.claude/agents` is already a symlink to
-   `sebby/claude/agents`.
+   `sebby/claude/agents`. The agents run the barrier as `bash <skill folder>/barrier.sh`,
+   so the script needs no execute bit.
 
 ## The hooks
 
@@ -43,7 +46,8 @@ tested, reviewed, and reverted like any other code:
   set).
 - **`cd_only_reminder.py`** adds a note when a Bash call only runs `cd`, because the
   Bash tool's working directory resets before the next call. It never blocks.
-- **`qa_tester_guard.py`** guards the QA swarm's tester agents. Each tester agent's
+- **`qa_tester_guard.py`** guards the QA swarm's tester agents (`qa-tester` and
+  `adversarial-tester`). Each tester agent's
   frontmatter references it, so it isn't registered in `settings-hooks.json` (that
   file registers hooks for every session), and it applies to the tester agents only.
   It denies a `.env` read, the dev key, a loopback port that isn't the run's, and a
@@ -70,4 +74,5 @@ once. Keep the main checkout on `main`, and do other work in a worktree.
 2. Restore `~/.claude/settings.json` from its timestamped backup, then validate it
    with `python3 -m json.tool`.
 3. To remove the QA swarm skill, remove the `~/.claude/skills/qa-swarm` symlink. The
-   `qa-tester` agent and the guard hook go away with a revert of the `sebby` branch.
+   `qa-tester` and `adversarial-tester` agents, the barrier script, and the guard hook go
+   away with a revert of the `sebby` branch.
