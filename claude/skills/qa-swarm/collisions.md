@@ -66,7 +66,7 @@ Run the barrier command exactly as your charter writes it. The form here, with `
 The command exits with one of four codes:
 
 - `0`: every participant arrived, and you can act now.
-- `75`: the barrier abandoned, or you already ran the command. Someone didn't arrive before the timeout, another participant's timeout came first, a signal stopped the command, or the shell that would run your action was gone. If you already ran the command and acted, a second run doesn't act again. Record the scenario as abandoned, not passed.
+- `75`: the barrier abandoned, or you already ran the command. Someone didn't arrive before the timeout, another participant's timeout came first, a signal stopped the command, or the shell that would run your action was gone. If you already ran the command, a second run doesn't act: not after you acted, and not after the tool stopped the command after the release (the barrier leaves a `stopped` marker for your name). Record the scenario as abandoned, not passed.
 - `64`: you mistyped an argument. The command creates nothing. Fix the command.
 - `1`: `barrier.sh` can't write in the barrier folder.
 
@@ -111,7 +111,7 @@ After you act, run the spread command from your own folder, so the guard attribu
 cd <run>/testers/<me> && bash "${SEBBY_ROOT:-$HOME/Developer/sebby}/claude/skills/qa-swarm/barrier.sh" spread <barrier.dir>
 ```
 
-It prints one JSON line: `outcome` (`go`, `abandoned`, or `pending`), `count` (how many arrived), `released_count` (how many had arrived when the barrier released, or `null`), `acted` (each participant's return time in milliseconds), `spread_ms` (the gap between the first and last return), `clock` (the clock that timed the release, as the `go` file records it: `bash`, `perl`, `python3`, or `date`, or `null` without a `go` file), and `skipped` (how many `acted` files it ignored for a bad name or value). Quote the line in every finding from a barrier scenario. A large spread means the collision wasn't tight, so say so. A `date` clock counts whole seconds, so its spread says little.
+It prints one JSON line: `outcome` (`go`, `abandoned`, or `pending`), `count` (how many arrived), `released_count` (how many had arrived when the barrier released, or `null`), `acted` (each participant's return time in milliseconds), `spread_ms` (the gap between the first and last return), `clock` (the clock that timed the release, as the `go` file records it: `bash`, `perl`, `python3`, or `date`, or `null` without a `go` file), `skipped` (how many `acted` files it ignored for a bad name or value), and `stopped` (each participant a signal stopped after the release and before it acted, such as a tool timeout). Quote the line in every finding from a barrier scenario. A large spread means the collision wasn't tight, so say so. A `date` clock counts whole seconds, so its spread says little.
 
 `spread_ms` is the release spread: how far apart the participants left the barrier. The action lands later, after `playwright-cli` starts and the click reaches the page, so the actions land further apart than `spread_ms` says. The runbook's "Barrier timing" table measures that action spread, and it's the real bound on how close the actions landed.
 
@@ -119,7 +119,7 @@ The outcome file and `spread` are authoritative, not one participant's exit code
 
 `released_count` must equal the number of `acted` entries. A mismatch goes one of two ways:
 
-- A `released_count` greater than the number of `acted` entries means a released participant never recorded acting: a SIGKILL stopped it (a SIGKILL can't be trapped), or a failed write lost its `acted` entry.
+- A `released_count` greater than the number of `acted` entries means a released participant never recorded acting: a signal stopped it after the release (`stopped` names it), a SIGKILL stopped it (a SIGKILL can't be trapped, and `stopped` doesn't name it), or a failed write lost its `acted` entry.
 - Fewer means a participant arrived after the release. It returned `0` and acted, but alone, so it isn't a real collision for that participant.
 
 Either way, the orchestrator reports the scenario as "not a real collision", not as passed.

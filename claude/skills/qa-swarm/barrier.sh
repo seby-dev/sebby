@@ -14,6 +14,8 @@
 #
 # A `wait` whose acted-<name> already exists (this name was released and acted) exits 75 at
 # once, says the barrier command was already run, and writes nothing: a re-run never acts twice.
+# So does one whose stopped-<name> exists (a signal stopped this name after the release, before
+# it acted): a re-run never acts late and alone.
 #
 # `go` reads `released_ms=<ms> by=<name> count=<n> clock=<clock>`: <clock> is the clock that
 # timed the release (bash, perl, python3, or date), and `spread` reports it as `clock`. It
@@ -29,7 +31,8 @@
 # a signal to the whole process group that kills `ln` after it made the link still leaves a
 # lock its taker recognizes. If another participant holds the lock, it leaves the outcome to
 # that one. If the outcome is `go`, a stopped waiter also removes its own `acted-<name>`,
-# since its action never ran. A waiter whose parent is gone (the shell that would run the
+# since its action never ran, and writes `stopped-<name>` (the time in ms), which `spread`
+# lists as `stopped`. A waiter whose parent is gone (the shell that would run the
 # `&&` action was killed) does the same (reason=orphaned), on its next poll and again just
 # before it writes `acted-<name>`; that last check also compares its parent pid, to catch a
 # reused pid. A `kill -0` that fails with EPERM (a live parent of another user) isn't taken
@@ -188,7 +191,8 @@ check_parent() {
 # A lock held by another participant is left to that one. A failed abandoned write gets its own
 # stderr line, since the others then wait out their timeouts.
 # If the outcome is `go`, it removes its own acted- file (and any temp file for it): a waiter
-# stopped while it wrote that file never returned 0, so its action never ran.
+# stopped while it wrote that file never returned 0, so its action never ran. It then writes
+# stopped-<name>, so a re-run of the same name refuses to act late.
 stop_waiter() {
   trap '' TERM INT HUP
   take_lock
@@ -199,6 +203,9 @@ stop_waiter() {
   fi
   if [ -e "$DIR/go" ]; then
     rm -f "$DIR/acted-$NAME" "$DIR/.acted-$NAME.tmp.$$"
+    now_ms
+    write_atomic "$DIR/stopped-$NAME" "$NOW_MS" ||
+      printf 'barrier.sh: couldn'"'"'t record the stop in %s\n' "$DIR" >&2
   fi
   printf 'barrier.sh: abandoned (%s): stopped (%s)\n' "$DIR" "$1" >&2
   exit 75
@@ -266,6 +273,11 @@ cmd_wait() {
       "$NAME" "$DIR" >&2
     exit 75
   fi
+  if [ -e "$DIR/stopped-$NAME" ]; then
+    printf 'barrier.sh: %s was stopped after the release in %s: not acting late\n' \
+      "$NAME" "$DIR" >&2
+    exit 75
+  fi
   [ -e "$DIR/abandoned" ] && gave_up "this barrier was already abandoned"
   PARENT=$PPID
   trap on_signal TERM INT HUP # before the arrival, so no arrival is left without its trap
@@ -297,7 +309,7 @@ cmd_spread() {
   DIR=$1
   [ -d "$DIR" ] || die_usage "'$DIR' isn't an existing directory"
   local outcome=pending f base name ms lo="" hi="" acted="" spread=null released=null
-  local line="" word clock=null skipped=0
+  local line="" word clock=null skipped=0 stopped=""
   [ -e "$DIR/go" ] && outcome=go
   [ "$outcome" = pending ] && [ -e "$DIR/abandoned" ] && outcome=abandoned
   if [ "$outcome" = go ]; then
@@ -328,8 +340,15 @@ cmd_spread() {
     { [ -z "$hi" ] || [ "$ms" -gt "$hi" ]; } && hi=$ms
   done
   [ -n "$lo" ] && spread=$((hi - lo))
-  printf '{"outcome": "%s", "count": %s, "released_count": %s, "acted": {%s}, "spread_ms": %s, "clock": %s, "skipped": %s}\n' \
-    "$outcome" "$READY" "$released" "$acted" "$spread" "$clock" "$skipped"
+  for f in "$DIR"/stopped-*; do
+    [ -f "$f" ] || continue
+    base="${f##*/}"
+    name="${base#stopped-}"
+    [[ $name =~ $NAME_RE ]] || continue # a stray name could break the JSON
+    stopped="$stopped${stopped:+, }\"$name\""
+  done
+  printf '{"outcome": "%s", "count": %s, "released_count": %s, "acted": {%s}, "spread_ms": %s, "clock": %s, "skipped": %s, "stopped": [%s]}\n' \
+    "$outcome" "$READY" "$released" "$acted" "$spread" "$clock" "$skipped" "$stopped"
 }
 
 main() {
