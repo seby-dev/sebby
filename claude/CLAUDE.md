@@ -10,7 +10,8 @@ session needs.
 1. Pushing to origin is always manual: stop after committing and wait for an
    explicit go-ahead, even under a blanket "proceed without checking in,"
    because a push can start a metered GitHub Actions run; a repository's
-   `pre-push` hook runs its local gate (`make pre-push`) first.
+   `pre-push` hook runs its local gate first (in staff2solfa, the fast
+   checks, `make pre-push-fast`; run the full `make pre-push` by hand).
 2. `~/.git` is live infrastructure (an accidental home-directory repository from
    2025-08-28 that backs other projects' worktrees): never delete,
    reinitialize, or run destructive commands against it, never run `git` in
