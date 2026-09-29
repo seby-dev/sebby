@@ -26,6 +26,11 @@ def test_browser_guide_pins_the_cli_and_names_its_sessions_and_output() -> None:
         "<cli folder>",
         "install-browser",
         ".playwright-cli",
+        "cd <run folder>/testers/<tester> && npm --prefix <cli folder> exec --",
+        "Never run `close-all` or `kill-all`",
+        "an hour idle",
+        "`groups`, `daemons`, and `bh_dirs`",
+        "sibling tester's folder",
     )
     for needle in needles:
         assert needle in body, needle
@@ -59,6 +64,13 @@ def test_scenarios_guide_defines_the_scenario_fields_and_names_no_executor() -> 
 def test_scenarios_guide_says_verify_never_trusts_the_agent_and_upload_needs_setup() -> None:
     body = text("scenarios.md")
     assert "never trusts" in body.lower() and "upload" in body.lower()
+
+
+def test_scenarios_guide_reads_the_site_and_state_from_the_environment() -> None:
+    body = text("scenarios.md")
+    assert 'SITE_URL = os.environ["QA_SITE_URL"]' in body
+    assert 'Path(os.environ["QA_RUN_DIR"]) / "state"' in body
+    assert "/results" not in body and "illustrative" in body
 
 
 def test_report_format_has_every_finding_field_and_the_severity_scale() -> None:

@@ -87,3 +87,11 @@ def test_the_body_states_the_safety_rules_and_the_report() -> None:
 def test_the_model_guard_sees_it_as_a_pinned_agent(tmp_path: Path) -> None:
     text = AGENT.read_text(encoding="utf-8")
     assert re.search(r"(?m)^model:\s*\S", text.split("\n---", 1)[0])
+
+
+def test_the_body_states_what_the_guard_doesnt_enforce() -> None:
+    body = AGENT.read_text(encoding="utf-8")
+    for needle in ("`organist_bot` paths only", "`install-browser`", "sibling tester's folder"):
+        assert needle in body, needle
+    assert "the guard denies a Read of one" not in body
+    assert "`verify` never trusts the agent's claim of success; it decides." in body

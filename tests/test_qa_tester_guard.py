@@ -76,6 +76,9 @@ def test_allows_a_harmless_command(active: Path) -> None:
         "scripts/qa_env.sh seed --run-dir x",
         "git push origin main",
         "git -C /repo commit -m x",
+        "npm --prefix /r/tools/qa-cli exec -- playwright-cli close-all",
+        "cd /r/testers/qa-1 && npm --prefix /c exec -- playwright-cli -s=qa-1-1 kill-all",
+        "playwright-cli 'close-all'",
     ],
 )
 def test_denies_static_patterns_even_with_no_active_file(command: str) -> None:
@@ -91,6 +94,9 @@ def test_denies_static_patterns_even_with_no_active_file(command: str) -> None:
         "echo .envrc",
         "scripts/qa_env.sh scenario-run --run-dir x --tester qa-1 draft.py",
         "ls env/vite-cache",
+        "npm --prefix /c exec -- playwright-cli -s=qa-1-1 close",
+        "npm --prefix /c exec -- playwright-cli list",
+        "echo close-all",
     ],
 )
 def test_does_not_flag_lookalikes(command: str, active: Path) -> None:

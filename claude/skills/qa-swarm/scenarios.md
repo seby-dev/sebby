@@ -6,20 +6,26 @@ A scenario is a reusable test of one behavior. You write it as a `Scenario`, and
 
 A scenario file lives in `testers/<tester>/scenarios/test_<slug>.py`:
 
+    import os
+    from pathlib import Path
+
     import pytest
 
     from qa_swarm.executor import Actor, Budget, PageState, Scenario, assert_passed
 
     pytestmark = pytest.mark.qa_swarm
 
+    SITE_URL = os.environ["QA_SITE_URL"]
+    STATE_FILE = Path(os.environ["QA_RUN_DIR"]) / "state" / "transcriber-a@choir.test.json"
+
     GOAL = """\
-    Click "Type sol-fa text directly". Set Key to "C" ...
+    Paste this sol-fa text into the paste box and read it ...
     """
 
 
     def verify(page: PageState) -> dict[str, bool]:
         return {
-            "on_results_screen": page.url.rstrip("/").endswith("/results"),
+            "on_piece_screen": "/piece" in page.url,
             "has_download": any(a["label"].startswith("Download ") for a in page.actions),
             "no_error_text": "error" not in page.text.lower(),
         }
@@ -38,7 +44,7 @@ A scenario file lives in `testers/<tester>/scenarios/test_<slug>.py`:
         )
         assert_passed(result)
 
-`STATE_FILE` and `SITE_URL` come from your charter.
+The example is illustrative: take the labels and routes from your charter and the app, not from this file. `scenario-run` sets `QA_SITE_URL` and `QA_RUN_DIR` for the scenario's process. Read both from the environment, and don't hard-code a port or a path, so a committed copy still runs. `STATE_FILE` must be a `Path`, because the plugin calls `read_text()` on it. The orchestrator's `session` command writes each state file to `<run folder>/state/<email>.json`.
 
 ## Rules
 
@@ -51,4 +57,4 @@ A scenario file lives in `testers/<tester>/scenarios/test_<slug>.py`:
 
 ## Running a draft
 
-Run it with `scripts/qa_env.sh scenario-run --run-dir <run> --tester <you> <draft>`. Read the result. A failed check is either a finding or a bad scenario. Rerun once with a corrected goal before you decide which, and say in each finding whether `verify` failed or the executor reported `blocked`.
+Run it with `<qa_env.sh path> scenario-run --run-dir <run> --tester <you> <draft>`, where `<qa_env.sh path>` is the absolute path in your charter. Read the result. A failed check is either a finding or a bad scenario. Rerun once with a corrected goal before you decide which, and say in each finding whether `verify` failed or the executor reported `blocked`.

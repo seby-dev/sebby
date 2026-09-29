@@ -43,7 +43,13 @@ def test_it_caps_concurrency_and_stops_the_environment_on_every_exit_path() -> N
 
 def test_it_checks_the_repository_and_the_logs_after_the_testers_finish() -> None:
     text = body()
-    for needle in ("git status --porcelain", "commands.log", "vision_forbidden", "jev_forbidden"):
+    for needle in (
+        "git status --porcelain",
+        "testers/<name>/commands.log",
+        "testers/_unattributed/commands.log",
+        "vision_forbidden",
+        "jev_forbidden",
+    ):
         assert needle in text, needle
 
 
@@ -61,3 +67,10 @@ def test_it_commits_only_passing_scenarios_and_reproduces_blockers_and_highs() -
 def test_it_says_what_this_version_doesnt_run() -> None:
     text = body()
     assert "only `qa-tester`" in text
+
+
+def test_it_uses_the_default_state_folder_and_lists_the_launcher_path_and_start_failures() -> None:
+    text = body()
+    assert "default `--out`" in text and "--out <state file>" not in text
+    assert "absolute path of `scripts/qa_env.sh`" in text
+    assert "stderr" in text and "sweeps" in text and "an hour idle" in text
