@@ -1,6 +1,9 @@
 """The qa-swarm guides carry the rules the testers depend on."""
 
+import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -94,7 +97,7 @@ def test_report_format_has_every_finding_field_and_the_severity_scale() -> None:
 
 
 @pytest.mark.parametrize(
-    "name", ["browser.md", "scenarios.md", "report-format.md", "collisions.md"]
+    "name", ["browser.md", "scenarios.md", "report-format.md", "collisions.md", "security.md"]
 )
 def test_guides_use_sentence_case_headings_and_no_directional_words(name: str) -> None:
     allowed = {"Playwright", "CLI"}
@@ -305,3 +308,126 @@ def test_browser_guide_forbids_the_apps_sign_out() -> None:
         "only with `cookie-delete s2s_session`, in your own session",
     ):
         assert needle in body, needle
+
+
+def test_security_guide_covers_the_checklist_with_commands() -> None:
+    body = text("security.md")
+    for needle in (
+        "## Access control between workspaces",
+        "## Session handling",
+        "## Malicious uploads",
+        "## Injection into rendered fields",
+        "## Cost-cap races",
+        "## Rate-limit abuse",
+        "## Headers and CSP",
+        "`ROLE_RULES`",
+        "--cacert <ca_file>",
+        "--data @cap.json",
+        "-F file=@xxe.musicxml",
+        "-H 'Origin: https://evil.example'",
+        "Sec-Fetch-Site: cross-site",
+        "--path-as-is",
+        "`held.md`",
+        "wait",
+    ):
+        assert needle in body, needle
+
+
+def test_security_guide_builds_a_cookie_jar_without_printing_the_cookie() -> None:
+    body = text("security.md")
+    assert "prints nothing" in body and "chmod 600 singer.jar" in body
+    assert "`Secure` only for an `https://` origin" in body
+    script = re.search(r"```python\n(.*?)```", body, re.DOTALL)
+    assert script and "print(" not in script.group(1)
+    assert 'json.load(handle)["cookies"]' in script.group(1)
+
+
+def test_security_guide_runs_the_script_it_ships(tmp_path: Path) -> None:
+    body = text("security.md")
+    script = re.search(r"```python\n(.*?)```", body, re.DOTALL)
+    assert script
+    path = tmp_path / "jar.py"
+    path.write_text(script.group(1), encoding="utf-8")
+    state = tmp_path / "state.json"
+    state.write_text(
+        json.dumps(
+            {
+                "cookies": [
+                    {
+                        "name": "s2s_session",
+                        "value": "COOKIEVALUE",
+                        "domain": "127.0.0.1",
+                        "path": "/",
+                        "httpOnly": True,
+                    }
+                ]
+            }
+        )
+    )
+    for site, flag in (("https://127.0.0.1:1", "TRUE"), ("http://127.0.0.1:1", "FALSE")):
+        jar = tmp_path / f"{flag}.jar"
+        done = subprocess.run(
+            [sys.executable, str(path), str(state), str(jar), site],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert done.stdout == "" and done.stderr == ""
+        rows = jar.read_text().splitlines()
+        assert rows[0] == "# Netscape HTTP Cookie File"
+        assert rows[1] == f"#HttpOnly_127.0.0.1\tFALSE\t/\t{flag}\t0\ts2s_session\tCOOKIEVALUE"
+
+
+def test_security_guide_says_what_holds_and_what_to_write() -> None:
+    body = text("security.md")
+    for needle in (
+        "expect a refusal or a 404, never data",
+        "A write that matches no rule is refused too.",
+        "undefined entity",
+        "A missing header the Caddyfile promises is a finding.",
+        "skipped: no Caddy",
+        "an empty report proves nothing about it",
+        "Only with your spare identity",
+        "Only when your charter says you're the final batch and alone.",
+    ):
+        assert needle in body, needle
+
+
+def test_browser_guide_has_the_https_section_with_the_certificate_option() -> None:
+    body = text("browser.md")
+    for needle in (
+        "## HTTPS origins",
+        "--config=<browser config>",
+        "--ignore-certificate-errors-spki-list",
+        "blocks service workers",
+        "net::ERR_CERT_AUTHORITY_INVALID",
+        "Never turn on a blanket switch such as `--ignore-certificate-errors`",
+        "A run without Caddy has an `http://` origin and needs no config.",
+    ):
+        assert needle in body, needle
+    assert body.index("## HTTPS origins") < body.index("## Commands you'll use")
+
+
+def test_report_format_has_the_security_detail_row_the_sec_prefix_and_the_held_section() -> None:
+    body = text("report-format.md")
+    assert "| Security detail |" in body and '"direct backend"' in body
+    assert "Never a cookie, a token, or a key." in body
+    assert "`sec-1-02`" in body
+    assert "## Attacks that held" in body
+    assert "`testers/<tester>/held.md`" in body
+    assert "`<area>: <attack> -> <what the app did>`" in body
+    assert "a control with no line wasn't tested" in body
+
+
+def test_security_guide_names_the_photo_read_and_leaves_loadgen_to_the_orchestrator() -> None:
+    body = text("security.md")
+    for needle in (
+        "the one sanctioned photo read",
+        "`STAFF2SOLFA_FORBID_BILLED=1` and holds no provider key",
+        "`vision_forbidden` line in the backend log that the orchestrator expects",
+        "Only when your charter says your batch runs alone",
+        '{"cap_usd": null}',
+        "Only the orchestrator runs `loadgen.py`",
+    ):
+        assert needle in body, needle
+    assert "`loadgen.py` can send the burst" not in body
