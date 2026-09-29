@@ -40,3 +40,22 @@ def test_the_existing_hook_docs_are_intact() -> None:
     body = text()
     for needle in ("agent_model_guard.py", "cd_only_reminder.py", "Each hook command fails open"):
         assert needle in body, needle
+
+
+def test_the_asset_list_names_the_adversarial_tester_the_barrier_and_the_collisions_guide() -> None:
+    body = text()
+    for needle in ("`adversarial-tester`", "`barrier.sh`", "`collisions.md`"):
+        assert needle in body, needle
+
+
+def test_the_readme_says_the_barrier_needs_no_execute_bit() -> None:
+    body = " ".join(text().split())
+    assert "bash <skill folder>/barrier.sh" in body and "needs no execute bit" in body
+
+
+def test_rollback_covers_both_agents_and_the_barrier() -> None:
+    body = " ".join(text().split())
+    assert (
+        "`qa-tester` and `adversarial-tester` agents, the barrier script, and the guard hook"
+        in body
+    )
