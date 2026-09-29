@@ -13,7 +13,10 @@ obfuscation), the dev key, the run's private folder, the eval and extraction scr
 `process.env`, `%ENV`, `getenv()`, `ps e`), `qa_env` outside `scenario-run`, `git push`,
 `git commit`, `playwright-cli close-all` and `kill-all`, and the git verbs that edit or hide the
 tree under test, a loopback port that isn't the run's own, and a write outside the run's
-`testers/` folder or into the repository. The pointer's optional `protected_roots` list (absolute
+`testers/` folder or into the repository. The pointer's optional `direct_ports` list (the
+backend's port) is denied like any other port, except to an agent whose payload `agent_type` is
+`security-tester`, which may probe it directly; a missing or different `agent_type` keeps the
+denial. The pointer's optional `protected_roots` list (absolute
 paths, such as a planted-defect worktree) is protected from writes the same way as `repo_root`;
 a non-string or relative entry is ignored.
 It appends every command to `testers/<name>/commands.log`.
@@ -37,6 +40,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ACTIVE_ENV = "QA_ACTIVE_FILE"
+SECURITY_AGENT = "security-tester"  # the only agent_type that may reach `direct_ports`
 WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 READ_TOOLS = frozenset({"Read"})
 GUARDED_TOOLS = WRITE_TOOLS | READ_TOOLS | {"Bash"}
@@ -162,6 +166,14 @@ def load_active() -> dict[str, object] | None:
 
 def _ports(active: dict[str, object]) -> set[int]:
     raw = active.get("ports")
+    if not isinstance(raw, list):
+        return set()
+    return {p for p in raw if isinstance(p, int) and not isinstance(p, bool)}
+
+
+def _direct_ports(active: dict[str, object]) -> set[int]:
+    """The loopback ports only a security-tester may reach (the run's backend)."""
+    raw = active.get("direct_ports")
     if not isinstance(raw, list):
         return set()
     return {p for p in raw if isinstance(p, int) and not isinstance(p, bool)}
@@ -352,10 +364,19 @@ def decide(payload: dict[str, object], active: dict[str, object] | None) -> str 
         return static
     if active is not None:
         ports = _ports(active)
+        direct = _direct_ports(active)
+        may_probe = ports | direct if payload.get("agent_type") == SECURITY_AGENT else ports
         for pattern in PORT_RES:
             for match in pattern.findall(command):
-                if int(match) not in ports:
-                    return f"Port {match} isn't this run's instance; its ports are {sorted(ports)}."
+                port = int(match)
+                if port in may_probe:
+                    continue
+                if port in direct:
+                    return (
+                        f"Port {match} is the run's backend, which only a {SECURITY_AGENT} "
+                        "may probe."
+                    )
+                return f"Port {match} isn't this run's instance; its ports are {sorted(ports)}."
     if protected:
         for path in _writes(command, cwd):
             inside = any(_under(path, root) for root in protected)
