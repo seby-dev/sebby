@@ -650,3 +650,29 @@ def test_a_direct_probe_is_logged_with_the_agent_type(
     assert run_hook(bash_as(command, "qa-tester"), active_with_direct)[1]  # denied
     last = json.loads((run_dir / "testers" / "sec-1" / "commands.log").read_text().splitlines()[-1])
     assert last["agent_type"] == "qa-tester" and last["decision"] == "deny"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        f"curl -s http://localhost:{BACKEND}/v1/health",
+        f"curl -s http://[::1]:{BACKEND}/v1/health",
+        f"curl -s localhost:{BACKEND}/v1/health",
+    ],
+)
+@pytest.mark.parametrize("agent_type", ["qa-tester", "adversarial-tester", None])
+def test_other_spellings_of_the_direct_port_are_denied_to_other_agents(
+    active_with_direct: Path, command: str, agent_type: str | None
+) -> None:
+    reason = denied(run_hook(bash_as(command, agent_type), active_with_direct)[1])
+    assert str(BACKEND) in reason and "security-tester" in reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [f"curl -s http://localhost:{BACKEND}/v1/health", f"curl -s http://[::1]:{BACKEND}/v1/health"],
+)
+def test_a_security_tester_may_probe_the_direct_port_by_other_loopback_names(
+    active_with_direct: Path, command: str
+) -> None:
+    assert run_hook(bash_as(command, "security-tester"), active_with_direct) == (0, "")
