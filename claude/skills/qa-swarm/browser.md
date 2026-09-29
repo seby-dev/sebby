@@ -42,7 +42,9 @@ Run `open` once per session. A second `open` restarts the session and drops its 
 - `tab-new [url]` and `tab-select <index>` open and switch tabs inside one session. `tab-list` shows them.
 - `cookie-delete <name>` deletes one cookie in your own session. `requests --filter <regexp>` lists only the network requests whose URL matches.
 
-The adversarial tester uses `dblclick`, `go-back`, `go-forward`, `reload`, `tab-new`, `tab-select`, `cookie-delete`, and `requests`. To end its own session while a form is open, it runs `cookie-delete s2s_session` in that session, and never signs out another tester's identity.
+The adversarial tester uses `dblclick`, `go-back`, `go-forward`, `reload`, `tab-new`, `tab-select`, `cookie-delete`, and `requests`. To end its own session while a form is open, it runs `cookie-delete s2s_session` in that session.
+
+Never use the app's Sign out. Testers share one server session per identity, so a sign-out ends every tester's session on that identity. End or expire a session only with `cookie-delete s2s_session`, in your own session.
 
 Use the exact `127.0.0.1` origin in your charter, never `localhost`.
 

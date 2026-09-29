@@ -133,7 +133,11 @@ def test_it_reports_the_spread_and_never_reports_abandoned_as_passed() -> None:
 
 def test_shared_is_written_only_by_the_prepare_step_and_the_barrier() -> None:
     text = body()
-    assert "only by the orchestrator's prepare step and `barrier.sh`" in text
+    assert (
+        "Only the orchestrator's prepare step and `barrier.sh` write in the run's `shared/` folder"
+        in text
+    )
+    assert "is written only by" not in text
     assert "6. Write only to the tester's own folder in the run." in text
     assert "doesn't catch a Bash write" in text and "step 7 lists each `shared/<id>`" in text
 
@@ -161,3 +165,31 @@ def test_the_seed_makes_two_runs_one_with_a_share() -> None:
     text = body()
     assert "two seeded runs, one with a share and one without" in text
     assert "one seeded run and share" not in text
+
+
+def test_the_charter_runs_the_collision_first_and_protects_other_scenarios_resources() -> None:
+    text = body()
+    for needle in (
+        "run its scenario first, right after it reads the charter and the guides,"
+        " before any free-form testing",
+        "never to change a resource that another scenario's `target.json` names",
+        "such as the seeded share or a seeded run",
+        "every other scenario's `target.json` path",
+    ):
+        assert needle in text, needle
+
+
+def test_scenarios_that_share_a_needs_resource_run_in_different_batches() -> None:
+    text = body()
+    assert "Scenarios that share a `needs` resource" in text
+    assert "run in different batches, never in the same batch" in text
+
+
+def test_a_mismatch_either_way_is_not_a_real_collision() -> None:
+    text = body()
+    for needle in (
+        "greater than the number of `acted` entries means a released participant never recorded"
+        " acting",
+        "fewer means a participant arrived after the release",
+    ):
+        assert needle in text, needle
