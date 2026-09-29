@@ -143,3 +143,21 @@ def test_the_step_numbers_the_last_line_cites_are_the_checking_steps() -> None:
     assert "so steps 7 and 10 check after the fact." in text
     assert "7. When a batch finishes, run `git status --porcelain`" in text
     assert "10. Merge and de-duplicate the findings" in text
+
+
+def test_after_the_batch_it_checks_released_count_against_the_acted_entries() -> None:
+    text = body()
+    for needle in (
+        "Its `outcome` is authoritative, not a participant's exit code.",
+        "Its `released_count` must equal the number of `acted` entries",
+        "a SIGKILL, which can't be trapped",
+        'report that scenario as "not a real collision", not as passed',
+        "`abandoned`, or `not a real collision`",
+    ):
+        assert needle in text, needle
+
+
+def test_the_seed_makes_two_runs_one_with_a_share() -> None:
+    text = body()
+    assert "two seeded runs, one with a share and one without" in text
+    assert "one seeded run and share" not in text

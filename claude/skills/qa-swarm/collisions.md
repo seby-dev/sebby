@@ -25,6 +25,8 @@ The charter gives you the path of `<run>/shared/<scenario>/target.json`. Read it
     "workspace_id": "...",
     "run_id": "...",
     "run_title": "QA seed hymn ...",
+    "run_unshared_id": "...",
+    "run_unshared_title": "QA seed hymn ...",
     "library_url": "http://127.0.0.1:5xxxx/library",
     "share_id": "...",
     "share_url": "http://127.0.0.1:5xxxx/s/..."
@@ -46,7 +48,7 @@ The charter gives you the path of `<run>/shared/<scenario>/target.json`. Read it
 }
 ```
 
-- `target` holds only what the scenario needs. `run_id`, `run_title`, `share_id`, and `share_url` appear only when the scenario uses them, and `run_title` is `null` when the run predates title recording.
+- `target` holds only what the scenario needs. `run_id`, `run_title`, `run_unshared_id`, `run_unshared_title`, `share_id`, and `share_url` appear only when the scenario uses them, and `run_title` is `null` when the run predates title recording. `run_unshared_id` and `run_unshared_title` name the seeded run that has no share, for a scenario that needs `run_unshared`, such as `double-publish`.
 - `barrier` is `null` unless `method` is `barrier-click`.
 - Find your entry in `participants` by your tester name. Its `state_file` signs your session in (see `browser.md`), and `action` says what you do.
 - `consumes` lists resources the scenario uses up, such as a share it revokes. Don't try to reuse one afterward.
@@ -64,7 +66,7 @@ Take the directory, count, and timeout from `target.json`'s `barrier`. Use your 
 The command exits with one of three codes:
 
 - `0`: every participant arrived, and you can act now.
-- `75`: the barrier was abandoned. Someone didn't arrive before the timeout, another participant's timeout came first, or a signal stopped the command. Record the scenario as abandoned, not passed.
+- `75`: the barrier was abandoned. Someone didn't arrive before the timeout, another participant's timeout came first, a signal stopped the command, or the shell that would run your action was gone. Record the scenario as abandoned, not passed.
 - `64`: you mistyped an argument. Nothing was created. Fix the command.
 
 A participant that can't get into position before the timeout lets the barrier abandon. That's by design: a stuck participant must never leave the others waiting forever.
@@ -79,7 +81,7 @@ cd <run>/testers/<me> && bash "${SEBBY_ROOT:-$HOME/Developer/sebby}/claude/skill
 
 If the barrier exits `75`, the `&&` chain stops and the click never runs. That's what you want.
 
-Get into position before you run the command, because the other participants are waiting: the page open, the snapshot taken, and the ref noted. Run the barrier command with the Bash tool's `timeout` set to 600000 (its maximum). If the tool stops the command, record the scenario as abandoned, and never re-run the barrier command: a second run would arrive at a barrier that has moved on. A stopped command withdraws its own arrival, unless the decider had already started, and a stalled decider leaves `barrier.sh spread` reporting `pending`.
+Get into position before you run the command, because the other participants are waiting: the page open, the snapshot taken, and the ref noted. Run the barrier command with the Bash tool's `timeout` set to 600000 (its maximum). If the tool stops the command, record the scenario as abandoned, and never re-run the barrier command: a second run would arrive at a barrier that has moved on. A stopped command abandons the barrier for everyone: it writes `abandoned` (unless another participant is already deciding the outcome), so the others exit `75` at once instead of waiting out their timeouts. A waiter whose shell is killed does the same and never writes its `acted` entry. A stalled decider leaves `barrier.sh spread` reporting `pending`.
 
 After you act, take a snapshot and run `playwright-cli requests`. Record what the page shows and what the requests were.
 
@@ -106,7 +108,11 @@ After the batch, or after you act, run:
 bash "${SEBBY_ROOT:-$HOME/Developer/sebby}/claude/skills/qa-swarm/barrier.sh" spread <barrier.dir>
 ```
 
-It prints one JSON line: `outcome` (`go`, `abandoned`, or `pending`), `count` (how many arrived), `acted` (each participant's return time in milliseconds), and `spread_ms` (the gap between the first and last return). Quote the line in every finding from a barrier scenario. A large spread means the collision wasn't tight, so say so.
+It prints one JSON line: `outcome` (`go`, `abandoned`, or `pending`), `count` (how many arrived), `released_count` (how many had arrived when the barrier released, or `null`), `acted` (each participant's return time in milliseconds), and `spread_ms` (the gap between the first and last return). Quote the line in every finding from a barrier scenario. A large spread means the collision wasn't tight, so say so.
+
+The outcome file and `spread` are authoritative, not one participant's exit code. A participant that times out waits a short grace period for the decider's outcome, and if the decider writes `go` only after that, the late participant has returned `75` while the others returned `0`. Trust `outcome`.
+
+`released_count` must equal the number of `acted` entries. A mismatch means a participant didn't really act: it was released but never wrote its `acted` entry, for example because a SIGKILL stopped it (a SIGKILL can't be trapped). The orchestrator reports that scenario as "not a real collision", not as passed.
 
 ## Rules
 

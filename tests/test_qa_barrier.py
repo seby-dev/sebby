@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -94,7 +95,8 @@ def test_a_lone_waiter_times_out_and_abandons_the_barrier(tmp_path: Path) -> Non
     _, stderr = proc.communicate(timeout=30)
     assert proc.returncode == 75 and "abandoned" in stderr
     assert time.monotonic() - began < 7
-    assert fields(tmp_path / "abandoned")["by"] == "solo"
+    abandoned = fields(tmp_path / "abandoned")
+    assert abandoned["by"] == "solo" and abandoned["reason"] == "timeout"
 
 
 def test_a_later_waiter_on_an_abandoned_barrier_exits_at_once_and_writes_nothing(
@@ -139,19 +141,106 @@ def test_a_stalled_decider_still_lets_every_waiter_time_out(tmp_path: Path) -> N
     assert json.loads(run("spread", str(tmp_path)).stdout)["outcome"] == "pending"
 
 
-def test_a_waiter_stopped_by_a_signal_withdraws_its_arrival(tmp_path: Path) -> None:
-    proc = start(tmp_path, "gone", 2)
-    ready = tmp_path / "ready-gone"
-    deadline = time.monotonic() + 10
-    while not ready.exists() and time.monotonic() < deadline:
+def wait_for(path: Path, seconds: float = 10) -> None:
+    deadline = time.monotonic() + seconds
+    while not path.exists() and time.monotonic() < deadline:
         time.sleep(0.02)
-    assert ready.exists()
-    proc.terminate()
+    assert path.exists(), path
+
+
+SIGNALS = [signal.SIGTERM, signal.SIGINT, signal.SIGHUP]
+
+
+@pytest.mark.parametrize("sig", SIGNALS, ids=lambda s: s.name)
+def test_a_waiter_stopped_by_a_signal_abandons_the_barrier(
+    tmp_path: Path, sig: signal.Signals
+) -> None:
+    proc = start(tmp_path, "gone", 2)
+    wait_for(tmp_path / "ready-gone")
+    proc.send_signal(sig)
     proc.communicate(timeout=10)
-    assert proc.returncode == 75 and not ready.exists()
-    # The second participant doesn't see a phantom arrival: it times out alone.
-    assert finish([start(tmp_path, "other", 2, 1)]) == [75]
-    assert (tmp_path / "abandoned").is_file()
+    assert proc.returncode == 75
+    assert (tmp_path / "ready-gone").exists()  # no withdrawal: the barrier is abandoned instead
+    abandoned = fields(tmp_path / "abandoned")
+    assert abandoned["by"] == "gone" and abandoned["reason"] == "signal"
+    assert (tmp_path / "go.lock" / "owner").read_text().strip() == "gone"
+    # A second participant sees the abandoned barrier and exits at once, not at its timeout.
+    began = time.monotonic()
+    assert finish([start(tmp_path, "other", 2, 60)]) == [75]
+    assert time.monotonic() - began < 10
+    assert not (tmp_path / "go").exists() and not (tmp_path / "acted-other").exists()
+
+
+@pytest.mark.parametrize("sig", SIGNALS, ids=lambda s: s.name)
+def test_a_signaled_waiter_leaves_another_deciders_lock_alone(
+    tmp_path: Path, sig: signal.Signals
+) -> None:
+    (tmp_path / "go.lock").mkdir()  # another participant is deciding right now
+    (tmp_path / "go.lock" / "owner").write_text("decider\n")
+    proc = start(tmp_path, "me", 3)
+    wait_for(tmp_path / "ready-me")
+    proc.send_signal(sig)
+    proc.communicate(timeout=10)
+    assert proc.returncode == 75
+    assert not (tmp_path / "abandoned").exists() and not (tmp_path / "go").exists()
+    assert (tmp_path / "go.lock" / "owner").read_text().strip() == "decider"
+
+
+@pytest.mark.parametrize("sig", SIGNALS, ids=lambda s: s.name)
+def test_a_signaled_decider_that_holds_the_lock_writes_abandoned(
+    tmp_path: Path, sig: signal.Signals
+) -> None:
+    (tmp_path / "go.lock").mkdir()  # this waiter's own lock, with no outcome written yet
+    (tmp_path / "go.lock" / "owner").write_text("me\n")
+    proc = start(tmp_path, "me", 3)
+    wait_for(tmp_path / "ready-me")
+    proc.send_signal(sig)
+    proc.communicate(timeout=10)
+    assert proc.returncode == 75
+    assert fields(tmp_path / "abandoned")["by"] == "me" and not (tmp_path / "go").exists()
+
+
+def barrier_pids(folder: Path) -> list[int]:
+    """The pids of the barrier.sh processes waiting on `folder`."""
+    out = subprocess.run(
+        ["ps", "-ww", "-eo", "pid=,args="], capture_output=True, text=True, check=True
+    ).stdout
+    pids = []
+    for line in out.splitlines():
+        pid, _, args = line.strip().partition(" ")
+        if "barrier.sh wait" in args and str(folder) in args and not args.startswith("bash -c"):
+            pids.append(int(pid))
+    return pids
+
+
+def test_an_orphaned_waiter_abandons_the_barrier_and_never_acts(tmp_path: Path) -> None:
+    clicked = tmp_path / "clicked"
+    folder = tmp_path / "barrier"
+    folder.mkdir()
+    outer = subprocess.Popen(
+        ["bash", "-c", f"bash {BARRIER} wait {folder} A 2 30 && touch {clicked}"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        wait_for(folder / "ready-A")
+        orphans = barrier_pids(folder)
+        assert orphans, "the inner barrier.sh isn't running"
+        outer.terminate()  # only the outer shell, as a tool timeout that kills the shell does
+        outer.wait(timeout=10)
+        wait_for(folder / "abandoned", 5)
+        deadline = time.monotonic() + 5
+        while barrier_pids(folder) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not barrier_pids(folder), "the orphan is still waiting"
+        abandoned = fields(folder / "abandoned")
+        assert abandoned["by"] == "A" and abandoned["reason"] == "orphaned"
+        assert not (folder / "acted-A").exists() and not clicked.exists()
+    finally:
+        for pid in barrier_pids(folder):
+            os.kill(pid, signal.SIGKILL)
+        if outer.poll() is None:
+            outer.kill()
 
 
 @pytest.mark.parametrize(
@@ -197,16 +286,57 @@ def _clock_or_skip(clock: str) -> None:
             pytest.skip("this bash has no EPOCHREALTIME (bash 5 only)")
 
 
-@pytest.mark.parametrize("clock", ["perl", "python3", "bash"])
-def test_each_clock_gives_integer_milliseconds_near_now(tmp_path: Path, clock: str) -> None:
-    _clock_or_skip(clock)
+def _clock_values(folder: Path, clock: str) -> list[int]:
     before = time.time() * 1000
-    result = run("wait", str(tmp_path), "a", "1", "5", env_extra={"QA_BARRIER_CLOCK": clock})
+    result = run("wait", str(folder), "a", "1", "5", env_extra={"QA_BARRIER_CLOCK": clock})
     assert result.returncode == 0, result.stderr
-    for path in (tmp_path / "ready-a", tmp_path / "acted-a"):
+    values = []
+    for path in (folder / "ready-a", folder / "acted-a"):
         text = path.read_text().strip()
-        assert text.isdigit() and abs(int(text) - before) < 5000, (path.name, text)
-    assert abs(int(fields(tmp_path / "go")["released_ms"]) - before) < 5000
+        assert text.isdigit(), (path.name, text)
+        values.append(int(text))
+    values.append(int(fields(folder / "go")["released_ms"]))
+    for value in values:
+        assert abs(value - before) < 10000, (clock, value)  # loose: a loaded machine
+    return values
+
+
+@pytest.mark.parametrize("clock", ["perl", "python3", "bash"])
+def test_each_millisecond_clock_gives_integer_milliseconds_near_now(
+    tmp_path: Path, clock: str
+) -> None:
+    _clock_or_skip(clock)
+    values = _clock_values(tmp_path, clock)
+    # A forced clock falls back only to `date`, whose whole seconds end in 000. Three values
+    # that all end in 000 by chance is a one-in-a-billion event, so this proves the clock ran.
+    assert any(v % 1000 for v in values), (clock, values)
+
+
+def test_the_date_clock_gives_whole_seconds_in_milliseconds(tmp_path: Path) -> None:
+    values = _clock_values(tmp_path, "date")
+    assert all(v % 1000 == 0 for v in values), values
+
+
+def test_a_forced_clock_that_fails_falls_back_to_date_not_epochrealtime(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in ("bash", "date", "mv", "mkdir", "sleep", "rm"):
+        found = shutil.which(tool)
+        assert found is not None, tool
+        (bin_dir / tool).symlink_to(found)
+    folder = tmp_path / "barrier"
+    folder.mkdir()
+    env = {"PATH": str(bin_dir), "QA_BARRIER_CLOCK": "perl"}  # no perl on this PATH
+    result = subprocess.run(
+        [str(bin_dir / "bash"), str(BARRIER), "wait", str(folder), "a", "1", "5"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert int((folder / "acted-a").read_text()) % 1000 == 0
+    assert int(fields(folder / "go")["released_ms"]) % 1000 == 0
 
 
 def test_spread_reports_a_released_barrier(tmp_path: Path) -> None:
@@ -215,6 +345,7 @@ def test_spread_reports_a_released_barrier(tmp_path: Path) -> None:
     out = json.loads(run("spread", str(tmp_path)).stdout)
     acted = {n: int((tmp_path / f"acted-{n}").read_text()) for n in names}
     assert out["outcome"] == "go" and out["count"] == 3 and out["acted"] == acted
+    assert out["released_count"] == 3 == len(out["acted"])
     assert out["spread_ms"] == max(acted.values()) - min(acted.values())
 
 
@@ -224,15 +355,43 @@ def test_spread_on_an_empty_folder_is_pending(tmp_path: Path) -> None:
     assert json.loads(result.stdout) == {
         "outcome": "pending",
         "count": 0,
+        "released_count": None,
         "acted": {},
         "spread_ms": None,
     }
+
+
+def test_spread_skips_stray_files_and_always_prints_valid_json(tmp_path: Path) -> None:
+    (tmp_path / "go").write_text("released_ms=1700000000000 by=a count=2\n")
+    (tmp_path / "acted-good").write_text("1700000000100\n")
+    (tmp_path / "acted-late").write_text("1700000000150\n")
+    (tmp_path / 'acted-x"y').write_text("1700000000200\n")  # a name that breaks JSON
+    (tmp_path / "acted-zero").write_text("0012\n")  # a leading zero: octal in bash
+    (tmp_path / "acted-nine").write_text("09\n")  # an invalid octal
+    (tmp_path / "acted-huge").write_text("9" * 20 + "\n")  # past 64-bit arithmetic
+    (tmp_path / "acted-").write_text("1700000000300\n")  # an empty name
+    (tmp_path / "junk").write_text("hello\n")
+    result = run("spread", str(tmp_path))
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    assert out["acted"] == {"good": 1700000000100, "late": 1700000000150}
+    assert out["spread_ms"] == 50 and out["released_count"] == 2 and out["outcome"] == "go"
+
+
+@pytest.mark.parametrize("go", ["released_ms=1 by=a\n", "released_ms=1 by=a count=0x1\n", ""])
+def test_spread_gives_a_null_released_count_for_a_go_without_a_valid_count(
+    tmp_path: Path, go: str
+) -> None:
+    (tmp_path / "go").write_text(go)
+    out = json.loads(run("spread", str(tmp_path)).stdout)
+    assert out["outcome"] == "go" and out["released_count"] is None
 
 
 def test_spread_on_an_abandoned_folder_says_so(tmp_path: Path) -> None:
     assert finish([start(tmp_path, "solo", 3, 1)]) == [75]
     out = json.loads(run("spread", str(tmp_path)).stdout)
     assert out["outcome"] == "abandoned" and out["count"] == 1 and out["spread_ms"] is None
+    assert out["released_count"] is None
 
 
 def test_the_script_passes_bash_n() -> None:

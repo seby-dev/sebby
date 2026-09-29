@@ -194,3 +194,36 @@ def test_every_barrier_path_in_the_guides_is_run_with_bash() -> None:
         body = text(name)
         for match in re.finditer(r'[^\s"`]*/barrier\.sh', body):
             assert re.search(r'bash "?$', body[: match.start()]), (name, match.group(0))
+
+
+def test_collisions_guide_says_a_signal_abandons_and_the_outcome_file_is_authoritative() -> None:
+    body = text("collisions.md")
+    for needle in (
+        "A stopped command abandons the barrier for everyone",
+        "never writes its `acted` entry",
+        "The outcome file and `spread` are authoritative, not one participant's exit code",
+        "the late participant has returned `75` while the others returned `0`",
+    ):
+        assert needle in body, needle
+    assert "withdraws its own arrival" not in body
+
+
+def test_collisions_guide_checks_released_count_against_the_acted_entries() -> None:
+    body = text("collisions.md")
+    for needle in (
+        "`released_count` (how many had arrived when the barrier released, or `null`)",
+        "`released_count` must equal the number of `acted` entries",
+        "a SIGKILL can't be trapped",
+        '"not a real collision", not as passed',
+    ):
+        assert needle in body, needle
+
+
+def test_collisions_guide_names_the_unshared_run_keys() -> None:
+    body = text("collisions.md")
+    assert '"run_unshared_id": "...",' in body and '"run_unshared_title":' in body
+    assert (
+        "`run_id`, `run_title`, `run_unshared_id`, `run_unshared_title`, `share_id`, and"
+        " `share_url` appear only when the scenario uses them"
+    ) in body
+    assert "a scenario that needs `run_unshared`, such as `double-publish`" in body
