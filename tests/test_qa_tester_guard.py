@@ -279,3 +279,188 @@ def test_the_frontmatter_form_exits_zero_when_the_hook_file_is_missing(tmp_path:
     command = f'f="{tmp_path}/missing.py"; [ -f "$f" ] || exit 0; python3 "$f" || exit 0'
     proc = subprocess.run(["sh", "-c", command], input="{}", capture_output=True, text=True)
     assert (proc.returncode, proc.stdout) == (0, "")
+
+
+# Wave-review fixes.
+
+
+def _load_hook() -> object:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("qa_tester_guard_under_test", HOOK)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_an_unknown_user_home_never_turns_off_the_checks(active: Path) -> None:
+    for command in ("touch ~nosuchuser/x; rm -r src", "touch ~nosuchuser/x"):
+        assert denied(run_hook(bash(command, cwd="/repo/app"), active)[1]), command
+    assert "inside the repository" in denied(
+        run_hook(bash("touch ~nosuchuser/x; rm -r src", cwd="/repo/app"), active)[1]
+    )
+
+
+def test_an_unexpected_error_fails_closed_with_a_valid_pointer(
+    active: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import io
+
+    hook = _load_hook()
+
+    def boom(payload: object, active: object) -> str | None:
+        raise KeyError("boom")
+
+    monkeypatch.setattr(hook, "decide", boom)
+    monkeypatch.setenv("QA_ACTIVE_FILE", str(active))
+    for payload in (bash("ls"), write("/tmp/x"), {"tool_name": "Read", "tool_input": {}}):
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+        assert hook.main() == 0  # type: ignore[attr-defined]
+        assert "unexpected error" in denied(capsys.readouterr().out)
+
+
+def test_an_unexpected_error_with_no_pointer_still_fails_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import io
+
+    hook = _load_hook()
+
+    def boom(payload: object, active: object) -> str | None:
+        raise KeyError("boom")
+
+    monkeypatch.setattr(hook, "decide", boom)
+    monkeypatch.setenv("QA_ACTIVE_FILE", str(tmp_path / "missing.json"))
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(bash("ls"))))
+    assert hook.main() == 0  # type: ignore[attr-defined]
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'npm --prefix /repo/app/web exec -- playwright-cli -s=qa-1-1 eval "() => document.title"',
+        "echo 'a > b'",
+        "python -c 'print(1>0)'",
+        "node -e 'const f = (a) => a'",
+        "grep -E 'a->b' /tmp/x.log",
+        'echo "x; rm src"',
+        '"/repo/app/scripts/qa_env.sh" scenario-run --run-dir x --tester qa-1 d.py',
+        "'/repo/app/scripts/qa_env.sh' scenario-run --run-dir x --tester qa-1 d.py",
+        "ls /repo/app/deploy/env",
+        "cat /repo/app/deploy/env/README.md",
+        "git diff HEAD~1",
+        "git show HEAD",
+        "curl http://127.0.0.1:5173/",
+        "curl http://127.1:5173/",
+        "nc -z localhost 5173",
+        "cp /repo/app/README.md /tmp/x",
+        "cp -t /tmp/out /repo/app/a.py /repo/app/b.py",
+        "ps -o pid,comm",
+    ],
+)
+def test_does_not_flag_quoted_text_or_read_only_forms(command: str, active: Path) -> None:
+    assert run_hook(bash(command, cwd="/repo/app"), active) == (0, ""), command
+
+
+def test_a_quoted_redirect_target_is_still_checked(active: Path) -> None:
+    assert denied(run_hook(bash('echo x > "/repo/app/a b.py"'), active)[1])
+    assert denied(run_hook(bash("echo 'y' > /repo/app/a.py"), active)[1])
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout -- src/x.py",
+        "git restore src/x.py",
+        "git reset --hard",
+        "git stash",
+        "git clean -fdx",
+        "git apply /tmp/p.diff",
+        "git switch main",
+        "git rebase main",
+        "git -C /repo/app checkout .",
+    ],
+)
+def test_denies_git_verbs_that_edit_or_hide_the_tree(command: str) -> None:
+    assert denied(run_hook(bash(command), None)[1]), command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python -c 'import os; print(dict(os.environ))'",
+        "python3 -c 'import os; print(os.environ)'",
+        "node -e 'console.log(process.env)'",
+        "node -e 'console.log(JSON.stringify(process.env))'",
+        "perl -e 'print %ENV'",
+        "php -r 'print_r(getenv());'",
+        "ps eww",
+        "ps auxe",
+        "ps -E",
+        "sh -c env",
+        "bash -c 'printenv'",
+        "ls\nenv",
+        "if true; then env; fi",
+        "cat .en[v]",
+        "cat .e''nv",
+        'cat .e"n"v',
+        "cat .en?",
+        "cat .e\\nv",
+    ],
+)
+def test_denies_environment_dumps_and_obfuscated_env_files(command: str) -> None:
+    assert denied(run_hook(bash(command), None)[1]), command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python -c 'import os; print(os.environ.get(\"HOME\"))'",
+        "node -e 'console.log(process.env.HOME)'",
+        "python -c 'import os; print(os.getenv(\"HOME\"))'",
+        "ps -p 1",
+    ],
+)
+def test_allows_single_variable_reads(command: str, active: Path) -> None:
+    assert run_hook(bash(command), active) == (0, ""), command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "curl http://127.1:8002/",
+        "curl http://127.0.1:8002/",
+        "curl http://0:8002/",
+        "curl http://0.0.0.0:8002/",
+        "curl http://2130706433:8002/",
+        "curl http://0x7f000001:8002/",
+        "curl http://localhost.:8002/",
+        "curl http://api.localhost:8002/",
+        "curl http://[0:0:0:0:0:0:0:1]:8002/",
+        "curl http://[::ffff:7f00:1]:8002/",
+        "nc localhost 8002",
+        "nc -w 1 127.0.0.1 8002",
+        "ncat 127.1 8002",
+        "telnet localhost 8002",
+        "socat - TCP:localhost:8002",
+        "python -c 'import socket; socket.create_connection((\"127.0.0.1\", 8002))'",
+    ],
+)
+def test_denies_more_loopback_spellings(command: str, active: Path) -> None:
+    assert "8002" in denied(run_hook(bash(command), active)[1]), command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "mv /repo/app/a.py /tmp/a.py",
+        "cp -t /repo/app/src /tmp/a.py",
+        "cp --target-directory=/repo/app/src /tmp/a.py",
+        "install -t /repo/app/bin /tmp/tool",
+        "install -d /repo/app/newdir",
+    ],
+)
+def test_denies_more_write_forms(command: str, active: Path) -> None:
+    assert "inside the repository" in denied(run_hook(bash(command), active)[1]), command
