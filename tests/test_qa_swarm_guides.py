@@ -553,8 +553,10 @@ def test_the_cost_cap_probe_is_well_formed_and_says_what_a_422_means() -> None:
         "At the default unknown-page cost of $1.00 a page, a $1.5 cap lets exactly one job id"
         " through",
         "Save this script as `png.py`",
+        'Record a second job id as "needs orchestrator check", not as a breach.',
     ):
         assert needle in section, needle
+    assert "so a second one is a finding" not in section
 
 
 def test_the_rate_limit_and_upload_steps_name_the_header_the_outbox_and_the_scan_rule() -> None:

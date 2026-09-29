@@ -375,3 +375,9 @@ def test_the_restart_phase_reads_exit_2_null_checks_and_the_previous_outcome() -
         "`limited_before: true` after a heavy batch can come from the per-client limit",
     ):
         assert needle in text, needle
+
+
+def test_the_skill_checks_a_second_cost_cap_job_in_the_backend_log() -> None:
+    text = SKILL.read_text(encoding="utf-8")
+    assert "needs orchestrator check" in text
+    assert "`spend_reserved`" in text and "`spend_settled`" in text
