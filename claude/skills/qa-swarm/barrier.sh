@@ -14,8 +14,11 @@
 #
 # A `wait` whose acted-<name> already exists (this name was released and acted) exits 75 at
 # once, says the barrier command was already run, and writes nothing: a re-run never acts twice.
-# So does one whose stopped-<name> exists (a signal stopped this name after the release, before
-# it acted): a re-run never acts late and alone.
+# So does one whose stopped-<name> exists (this name was stopped after the release, before it
+# acted: a signal, or its parent shell gone), and one whose ready-<name> already exists once
+# `go` does (this name arrived, then stopped while the decider was writing `go`): a re-run
+# never acts late and alone. A first run never finds its own ready- file, since the prepare
+# step refuses a barrier folder that an earlier batch used.
 #
 # `go` reads `released_ms=<ms> by=<name> count=<n> clock=<clock>`: <clock> is the clock that
 # timed the release (bash, perl, python3, or date), and `spread` reports it as `clock`. It
@@ -120,8 +123,8 @@ ms_python() {
 }
 
 # write_atomic <file> <text>: a dot-prefixed temp file in the same folder, then a rename, so
-# a reader never sees half a file and a temp file never matches ready-* or acted-*. A failed
-# write removes its temp file and returns 1.
+# a reader never sees half a file and a temp file never matches ready-*, acted-*, or
+# stopped-*. A failed write removes its temp file and returns 1.
 write_atomic() {
   local dir="${1%/*}" base="${1##*/}"
   local tmp="$dir/.$base.tmp.$$"
@@ -202,10 +205,11 @@ stop_waiter() {
       printf 'barrier.sh: couldn'"'"'t record the abandon in %s\n' "$DIR" >&2
   fi
   if [ -e "$DIR/go" ]; then
-    rm -f "$DIR/acted-$NAME" "$DIR/.acted-$NAME.tmp.$$"
+    # The marker first, so there's no moment with neither file for a re-run to slip through.
     now_ms
     write_atomic "$DIR/stopped-$NAME" "$NOW_MS" ||
       printf 'barrier.sh: couldn'"'"'t record the stop in %s\n' "$DIR" >&2
+    rm -f "$DIR/acted-$NAME" "$DIR/.acted-$NAME.tmp.$$"
   fi
   printf 'barrier.sh: abandoned (%s): stopped (%s)\n' "$DIR" "$1" >&2
   exit 75
@@ -275,6 +279,11 @@ cmd_wait() {
   fi
   if [ -e "$DIR/stopped-$NAME" ]; then
     printf 'barrier.sh: %s was stopped after the release in %s: not acting late\n' \
+      "$NAME" "$DIR" >&2
+    exit 75
+  fi
+  if [ -e "$DIR/go" ] && [ -e "$DIR/ready-$NAME" ]; then
+    printf 'barrier.sh: %s already arrived at %s before the release: not acting late\n' \
       "$NAME" "$DIR" >&2
     exit 75
   fi

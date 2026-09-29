@@ -293,6 +293,17 @@ def test_a_waiter_stopped_while_writing_acted_drops_it_and_exits_75(
     assert json.loads(run("spread", str(folder)).stdout)["acted"] == out["acted"]
 
 
+def test_a_rerun_whose_arrival_is_already_counted_in_go_refuses_to_act(tmp_path: Path) -> None:
+    """A waiter stopped while the decider was writing `go` left no marker; its ready- file
+    says it arrived, so a re-run of that name still doesn't act late and alone."""
+    (tmp_path / "ready-me").write_text("1700000000000\n")
+    (tmp_path / "go").write_text("released_ms=1700000000010 by=other count=2 clock=bash\n")
+    before = listing(tmp_path)
+    again = run("wait", str(tmp_path), "me", "2", "5")
+    assert again.returncode == 75 and "already arrived" in again.stderr
+    assert listing(tmp_path) == before
+
+
 def test_a_waiter_stopped_before_the_release_leaves_no_stopped_marker(tmp_path: Path) -> None:
     proc = start(tmp_path, "me", 2, 60)
     wait_for(tmp_path / "ready-me", 20)
