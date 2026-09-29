@@ -4,13 +4,14 @@ Write one file per finding to `testers/<tester>/findings/<id>.md`. The orchestra
 
 | Field | Content |
 |---|---|
-| ID | `<tester>-<number>`, for example `qa-03`. |
+| ID | `<tester>-<number>`, for example `qa-03`. The adversarial tester uses the `adv-` prefix, for example `adv-02`. |
 | Tester and role | Your name, your agent role, and the identity role you acted as. |
 | Severity | `blocker`, `high`, `medium`, or `low`. |
 | Title | One line that names the symptom. |
 | Method and route | The HTTP method and route template, when a request is involved. |
 | Steps to reproduce | The exact commands or requests, in order, from a state file, or the scenario draft's path. |
 | Expected and actual | What the spec or common sense expects, and what happened. |
+| Collision | The scenario id, the method (barrier click, repeat click, parallel fetch, or parallel sessions), and the `barrier.sh spread` output, or `abandoned`. Only findings from a collision scenario have it. |
 | Evidence | Screenshot paths, console lines, network entries, and response bodies, quoted or by path. |
 | Reproduced | Left for the orchestrator to fill in: yes, no, or not attempted. |
 

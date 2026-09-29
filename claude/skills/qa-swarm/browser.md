@@ -38,6 +38,11 @@ Run `open` once per session. A second `open` restarts the session and drops its 
 - `upload <files...>` attaches files (absolute paths) to the file chooser that's open.
 - `screenshot`, `console`, `requests`, `request <index>`, and `eval <js>` collect evidence.
 - `state-save <file>` writes the session's state.
+- `dblclick <ref>` double-clicks. `go-back`, `go-forward`, and `reload` move through the page's history.
+- `tab-new [url]` and `tab-select <index>` open and switch tabs inside one session. `tab-list` shows them.
+- `cookie-delete <name>` deletes one cookie in your own session. `requests --filter <regexp>` lists only the network requests whose URL matches.
+
+The adversarial tester uses `dblclick`, `go-back`, `go-forward`, `reload`, `tab-new`, `tab-select`, `cookie-delete`, and `requests`. To end its own session while a form is open, it runs `cookie-delete s2s_session` in that session, and never signs out another tester's identity.
 
 Use the exact `127.0.0.1` origin in your charter, never `localhost`.
 

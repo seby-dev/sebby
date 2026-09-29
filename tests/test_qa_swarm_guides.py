@@ -1,5 +1,6 @@
 """The qa-swarm guides carry the rules the testers depend on."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -92,7 +93,9 @@ def test_report_format_has_every_finding_field_and_the_severity_scale() -> None:
     assert "reachability" in body
 
 
-@pytest.mark.parametrize("name", ["browser.md", "scenarios.md", "report-format.md"])
+@pytest.mark.parametrize(
+    "name", ["browser.md", "scenarios.md", "report-format.md", "collisions.md"]
+)
 def test_guides_use_sentence_case_headings_and_no_directional_words(name: str) -> None:
     allowed = {"Playwright", "CLI"}
     for line in text(name).splitlines():
@@ -104,3 +107,90 @@ def test_guides_use_sentence_case_headings_and_no_directional_words(name: str) -
     lowered = text(name).lower()
     for word in (" above ", " below "):
         assert word not in lowered, word
+
+
+def test_collisions_guide_defines_the_target_file_and_the_barrier_command() -> None:
+    body = text("collisions.md")
+    needles = (
+        "target.json",
+        '"version": 1',
+        '"barrier"',
+        '"participants"',
+        "`null` unless `method` is `barrier-click`",
+        'bash "${SEBBY_ROOT:-$HOME/Developer/sebby}/claude/skills/qa-swarm/barrier.sh"'
+        " wait <barrier.dir>",
+        "`timeout` set to 600000",
+        "never re-run the barrier command",
+        "<barrier.count> <barrier.timeout_seconds>",
+        "cd <run>/testers/<me> && bash",
+        "-s=<session> click <ref>",
+        "Snapshot first, then one command",
+    )
+    for needle in needles:
+        assert needle in body, needle
+
+
+def test_collisions_guide_says_what_each_exit_code_means() -> None:
+    body = text("collisions.md")
+    for needle in ("`0`", "`75`", "`64`", "abandoned", "not passed"):
+        assert needle in body, needle
+
+
+def test_collisions_guide_names_the_four_methods() -> None:
+    body = text("collisions.md")
+    for needle in (
+        "**Barrier click.**",
+        "**Repeat click.**",
+        "`dblclick <ref>`",
+        "`click <ref> && click <ref>`",
+        "**Parallel fetch.**",
+        "Promise.all([fetch(",
+        "**Parallel sessions.**",
+        "cd <run>/testers/<me> && { cmd1 & cmd2 & wait; }",
+        "cd <run>/testers/<me> && npm --prefix <cli folder> exec --"
+        " playwright-cli -s=<session> eval",
+    ):
+        assert needle in body, needle
+
+
+def test_collisions_guide_keeps_testers_out_of_shared_and_names_the_spread_command() -> None:
+    body = text("collisions.md")
+    for needle in (
+        "You never write in the run's `shared/` folder",
+        'barrier.sh" spread <barrier.dir>',
+        "`spread_ms`",
+        "see the project's measurement",
+        "lets the barrier abandon",
+    ):
+        assert needle in body, needle
+    assert not re.search(r"\d+\s*ms\b", body), "the guide must not promise a timing number"
+
+
+def test_browser_guide_lists_the_adversarial_testers_commands() -> None:
+    body = text("browser.md")
+    for command in (
+        "dblclick",
+        "go-back",
+        "go-forward",
+        "reload",
+        "tab-new",
+        "tab-select",
+        "cookie-delete",
+        "requests",
+    ):
+        assert f"`{command}" in body, command
+    assert "The adversarial tester uses" in body
+    assert "cookie-delete s2s_session" in body
+
+
+def test_report_format_has_the_collision_row_and_the_adv_prefix() -> None:
+    body = text("report-format.md")
+    assert "| Collision |" in body and "`barrier.sh spread` output, or `abandoned`" in body
+    assert "`adv-02`" in body
+
+
+def test_every_barrier_path_in_the_guides_is_run_with_bash() -> None:
+    for name in ("browser.md", "collisions.md", "report-format.md", "scenarios.md"):
+        body = text(name)
+        for match in re.finditer(r'[^\s"`]*/barrier\.sh', body):
+            assert re.search(r'bash "?$', body[: match.start()]), (name, match.group(0))
