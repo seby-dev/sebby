@@ -74,3 +74,9 @@ def test_it_uses_the_default_state_folder_and_lists_the_launcher_path_and_start_
     assert "default `--out`" in text and "--out <state file>" not in text
     assert "absolute path of `scripts/qa_env.sh`" in text
     assert "stderr" in text and "sweeps" in text and "an hour idle" in text
+
+
+def test_start_passes_a_web_root_and_reuses_a_running_instance() -> None:
+    text = body()
+    assert "--web-root <dir>" in text
+    assert "already running" in text
