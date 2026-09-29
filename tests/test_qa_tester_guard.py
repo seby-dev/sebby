@@ -537,3 +537,142 @@ def test_a_non_list_protected_roots_changes_nothing(tmp_path: Path) -> None:
     file.write_text(json.dumps(pointer))
     assert run_hook(bash("touch /tmp/qa-planted/x"), file) == (0, "")
     assert denied(run_hook(bash("touch /repo/app/x"), file)[1])
+
+
+# The backend's direct port: only a security-tester may probe it (slice 3).
+
+BACKEND = 6543
+
+
+def bash_as(command: str, agent_type: str | None) -> dict[str, object]:
+    payload = bash(command)
+    if agent_type is not None:
+        payload["agent_type"] = agent_type
+    return payload
+
+
+@pytest.fixture
+def active_with_direct(tmp_path: Path, run_dir: Path) -> Path:
+    file = tmp_path / "qa-active-direct.json"
+    file.write_text(
+        json.dumps(
+            {
+                "run_dir": str(run_dir),
+                "repo_root": "/repo/app",
+                "ports": [5173],
+                "direct_ports": [BACKEND],
+            }
+        )
+    )
+    return file
+
+
+PROBE = f"curl -s http://127.0.0.1:{BACKEND}/v1/health"
+
+
+def test_a_security_tester_may_probe_the_direct_backend_port(active_with_direct: Path) -> None:
+    assert run_hook(bash_as(PROBE, "security-tester"), active_with_direct) == (0, "")
+    nc = f"nc 127.0.0.1 {BACKEND}"
+    assert run_hook(bash_as(nc, "security-tester"), active_with_direct) == (0, "")
+
+
+@pytest.mark.parametrize("agent_type", ["qa-tester", "adversarial-tester", "Explore", "", None])
+def test_every_other_agent_and_a_missing_agent_type_is_denied_the_direct_port(
+    active_with_direct: Path, agent_type: str | None
+) -> None:
+    code, out = run_hook(bash_as(PROBE, agent_type), active_with_direct)
+    assert code == 0
+    reason = denied(out)
+    assert str(BACKEND) in reason and "security-tester" in reason
+
+
+def test_a_non_string_agent_type_is_denied_the_direct_port(active_with_direct: Path) -> None:
+    payload = bash(PROBE)
+    payload["agent_type"] = ["security-tester"]
+    assert denied(run_hook(payload, active_with_direct)[1])
+
+
+def test_a_security_tester_is_still_denied_every_other_port(active_with_direct: Path) -> None:
+    reason = denied(
+        run_hook(bash_as("curl http://127.0.0.1:8002/", "security-tester"), active_with_direct)[1]
+    )
+    assert "8002" in reason and "isn't this run's instance" in reason
+    assert run_hook(
+        bash_as("curl http://127.0.0.1:5173/", "security-tester"), active_with_direct
+    ) == (
+        0,
+        "",
+    )
+    both = f"curl http://127.0.0.1:{BACKEND}/ http://127.0.0.1:8002/"
+    assert "8002" in denied(run_hook(bash_as(both, "security-tester"), active_with_direct)[1])
+
+
+def test_a_security_tester_gets_no_other_allowance_from_the_direct_port(
+    active_with_direct: Path,
+) -> None:
+    for command in (
+        f"curl -H 'X-API-Key: dev-key' http://127.0.0.1:{BACKEND}/v1/shares",
+        "cat env/private/api-key",
+        "git push origin main",
+        "scripts/qa_env.sh restart --run-dir x",
+    ):
+        assert denied(run_hook(bash_as(command, "security-tester"), active_with_direct)[1]), command
+
+
+@pytest.mark.parametrize("value", ["6543", 6543, [True], ["6543"], [6543.5], None, {}])
+def test_a_malformed_direct_ports_entry_allows_nothing(
+    tmp_path: Path, run_dir: Path, value: object
+) -> None:
+    file = tmp_path / "qa-active-bad.json"
+    file.write_text(
+        json.dumps(
+            {"run_dir": str(run_dir), "repo_root": "/r", "ports": [5173], "direct_ports": value}
+        )
+    )
+    assert denied(run_hook(bash_as(PROBE, "security-tester"), file)[1])
+
+
+def test_an_active_file_with_no_direct_ports_denies_the_port_to_everyone(active: Path) -> None:
+    assert denied(run_hook(bash_as(PROBE, "security-tester"), active)[1])
+
+
+def test_a_direct_probe_is_logged_with_the_agent_type(
+    active_with_direct: Path, run_dir: Path
+) -> None:
+    command = f"cd {run_dir}/testers/sec-1 && {PROBE}"
+    assert run_hook(bash_as(command, "security-tester"), active_with_direct) == (0, "")
+    rows = [
+        json.loads(line)
+        for line in (run_dir / "testers" / "sec-1" / "commands.log").read_text().splitlines()
+    ]
+    assert rows[-1]["agent_type"] == "security-tester" and rows[-1]["decision"] == "allow"
+    assert PROBE in rows[-1]["command"]
+    assert run_hook(bash_as(command, "qa-tester"), active_with_direct)[1]  # denied
+    last = json.loads((run_dir / "testers" / "sec-1" / "commands.log").read_text().splitlines()[-1])
+    assert last["agent_type"] == "qa-tester" and last["decision"] == "deny"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        f"curl -s http://localhost:{BACKEND}/v1/health",
+        f"curl -s http://[::1]:{BACKEND}/v1/health",
+        f"curl -s localhost:{BACKEND}/v1/health",
+    ],
+)
+@pytest.mark.parametrize("agent_type", ["qa-tester", "adversarial-tester", None])
+def test_other_spellings_of_the_direct_port_are_denied_to_other_agents(
+    active_with_direct: Path, command: str, agent_type: str | None
+) -> None:
+    reason = denied(run_hook(bash_as(command, agent_type), active_with_direct)[1])
+    assert str(BACKEND) in reason and "security-tester" in reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [f"curl -s http://localhost:{BACKEND}/v1/health", f"curl -s http://[::1]:{BACKEND}/v1/health"],
+)
+def test_a_security_tester_may_probe_the_direct_port_by_other_loopback_names(
+    active_with_direct: Path, command: str
+) -> None:
+    assert run_hook(bash_as(command, "security-tester"), active_with_direct) == (0, "")
