@@ -94,13 +94,15 @@ def test_the_body_covers_the_five_checks_and_the_collision_mechanics() -> None:
         "reload",
         "extreme lengths",
         "spread",
-        "adv-<n>",
+        "`<your name>-<n>`",
+        "`adv-1-02`",
         "target.json",
         "parallel fetch",
         "`timeout` set to 600000",
         "never re-run the barrier command",
         "Get into position first",
-        "{ cmd1 & cmd2 & wait; }",
+        'cd <run>/testers/<you> && { cmd1 & p1=$!; cmd2 & p2=$!; wait $p1; echo "a=$?";'
+        ' wait $p2; echo "b=$?"; }',
         '"${SEBBY_ROOT:-$HOME/Developer/sebby}/claude/skills/qa-swarm/barrier.sh"',
     )
     for needle in needles:
@@ -128,3 +130,46 @@ def test_it_never_names_a_qa_env_command_and_no_bypass_hunting() -> None:
     assert "qa_env.sh scenario-run" not in body and "scenario-run" not in body
     assert "Never run a `qa_env.sh` command" in body
     assert "You aren't after a security bypass" in body
+
+
+def test_a_collision_scenario_runs_first_and_other_scenarios_resources_stay_untouched() -> None:
+    body = AGENT.read_text(encoding="utf-8")
+    for needle in (
+        "run your collision scenario first",
+        "right after you read the charter and the guides, before any free-form testing",
+        "never change a resource that another scenario's `target.json` names",
+        "such as the seeded share or a seeded run",
+    ):
+        assert needle in body, needle
+
+
+def test_it_never_signs_out_and_ends_a_session_only_by_deleting_its_own_cookie() -> None:
+    body = AGENT.read_text(encoding="utf-8")
+    for needle in (
+        "Never use the app's Sign out",
+        "Testers share one server session per identity",
+        "ends every tester's session on that identity",
+        "only with `cookie-delete s2s_session`, in your own session",
+    ):
+        assert needle in body, needle
+
+
+def test_it_runs_the_charters_barrier_command_as_written_and_treats_any_failure_as_abandoned() -> (
+    None
+):
+    body = AGENT.read_text(encoding="utf-8")
+    for needle in (
+        "the barrier command exactly as your charter writes it",
+        "only the fallback when a charter gives none",
+        "Any exit code other than `0`",
+        "`127`",
+        "you didn't act",
+    ):
+        assert needle in body, needle
+
+
+def test_its_spread_command_starts_in_its_own_folder_and_its_prose_is_active() -> None:
+    body = AGENT.read_text(encoding="utf-8")
+    assert "`cd <run>/testers/<you> && bash " in body and " spread <barrier dir>`" in body
+    assert "was abandoned" not in body
+    assert "adv-<n>" not in body and "{ cmd1 & cmd2 & wait; }" not in body

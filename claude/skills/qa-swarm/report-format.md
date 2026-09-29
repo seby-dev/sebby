@@ -4,7 +4,7 @@ Write one file per finding to `testers/<tester>/findings/<id>.md`. The orchestra
 
 | Field | Content |
 |---|---|
-| ID | `<tester>-<number>`, for example `qa-03`. The adversarial tester uses the `adv-` prefix, for example `adv-02`. |
+| ID | `<tester>-<number>`, where `<tester>` is your tester name: for example `qa-1-03`, or `adv-1-02` for the adversarial tester `adv-1`. |
 | Tester and role | Your name, your agent role, and the identity role you acted as. |
 | Severity | `blocker`, `high`, `medium`, or `low`. |
 | Title | One line that names the symptom. |

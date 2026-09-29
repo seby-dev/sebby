@@ -127,6 +127,20 @@ def test_a_late_arriver_after_go_returns_at_once_with_an_acted_file(tmp_path: Pa
     assert (tmp_path / "acted-late").is_file()
 
 
+def test_a_rerun_after_acting_exits_75_at_once_and_does_not_act_again(tmp_path: Path) -> None:
+    assert finish([start(tmp_path, "a", 2), start(tmp_path, "b", 2)]) == [0, 0]
+
+    def contents() -> dict[str, str]:
+        return {p.name: p.read_text() for p in tmp_path.iterdir() if not p.is_symlink()}
+
+    before = contents()
+    began = time.monotonic()
+    result = run("wait", str(tmp_path), "a", "2", "600")
+    assert result.returncode == 75 and time.monotonic() - began < 2
+    assert "already run" in result.stderr
+    assert contents() == before and lock_owner(tmp_path) in ("a", "b")
+
+
 def test_the_timeout_defaults_to_300_seconds(tmp_path: Path) -> None:
     assert "${5:-300}" in BARRIER.read_text()  # the default, since a real run would take 300 s
     proc = start(tmp_path, "a", 2)  # no timeout argument
@@ -223,6 +237,24 @@ def shim_dir(tmp_path: Path, tool: str, body: str) -> Path:
 
 def shim_path(bin_dir: Path) -> dict[str, str]:
     return {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+
+
+def test_a_signaled_waiter_that_cant_write_abandoned_says_so(tmp_path: Path) -> None:
+    # The shim fails the rename that would put `abandoned` in place.
+    body = (
+        'for last; do :; done\ncase "${last##*/}" in abandoned) exit 1 ;; esac\nexec "$REAL" "$@"'
+    )
+    env = shim_path(shim_dir(tmp_path, "mv", body))
+    folder = tmp_path / "barrier"
+    folder.mkdir()
+    proc = start(folder, "gone", 2, env_extra=env)
+    wait_for(folder / "ready-gone")
+    proc.send_signal(signal.SIGTERM)
+    _, stderr = proc.communicate(timeout=10)
+    assert proc.returncode == 75
+    assert f"barrier.sh: couldn't record the abandon in {folder}" in stderr
+    assert not (folder / "abandoned").exists()
+    assert not [p for p in folder.iterdir() if p.name.startswith(".")]  # no temp file left
 
 
 # How a waiter reaches `claim`: as the decider once the count is met, or at its timeout.
@@ -410,9 +442,12 @@ def _clock_values(folder: Path, clock: str) -> list[int]:
         text = path.read_text().strip()
         assert text.isdigit(), (path.name, text)
         values.append(int(text))
-    values.append(int(fields(folder / "go")["released_ms"]))
+    go = fields(folder / "go")
+    values.append(int(go["released_ms"]))
     for value in values:
         assert abs(value - before) < 10000, (clock, value)  # loose: a loaded machine
+    assert go["clock"] == clock
+    assert json.loads(run("spread", str(folder)).stdout)["clock"] == clock
     return values
 
 
@@ -452,6 +487,7 @@ def test_a_forced_clock_that_fails_falls_back_to_date_not_epochrealtime(tmp_path
     assert result.returncode == 0, result.stderr
     assert int((folder / "acted-a").read_text()) % 1000 == 0
     assert int(fields(folder / "go")["released_ms"]) % 1000 == 0
+    assert fields(folder / "go")["clock"] == "date"  # the clock that ran, not the one forced
 
 
 def test_spread_reports_a_released_barrier(tmp_path: Path) -> None:
@@ -462,6 +498,7 @@ def test_spread_reports_a_released_barrier(tmp_path: Path) -> None:
     assert out["outcome"] == "go" and out["count"] == 3 and out["acted"] == acted
     assert out["released_count"] == 3 == len(out["acted"])
     assert out["spread_ms"] == max(acted.values()) - min(acted.values())
+    assert out["skipped"] == 0 and out["clock"] in ("bash", "perl", "python3", "date")
 
 
 def test_spread_on_an_empty_folder_is_pending(tmp_path: Path) -> None:
@@ -473,11 +510,13 @@ def test_spread_on_an_empty_folder_is_pending(tmp_path: Path) -> None:
         "released_count": None,
         "acted": {},
         "spread_ms": None,
+        "clock": None,
+        "skipped": 0,
     }
 
 
 def test_spread_skips_stray_files_and_always_prints_valid_json(tmp_path: Path) -> None:
-    (tmp_path / "go").write_text("released_ms=1700000000000 by=a count=2\n")
+    (tmp_path / "go").write_text("released_ms=1700000000000 by=a count=2 clock=perl\n")
     (tmp_path / "acted-good").write_text("1700000000100\n")
     (tmp_path / "acted-late").write_text("1700000000150\n")
     (tmp_path / 'acted-x"y').write_text("1700000000200\n")  # a name that breaks JSON
@@ -491,22 +530,31 @@ def test_spread_skips_stray_files_and_always_prints_valid_json(tmp_path: Path) -
     out = json.loads(result.stdout)
     assert out["acted"] == {"good": 1700000000100, "late": 1700000000150}
     assert out["spread_ms"] == 50 and out["released_count"] == 2 and out["outcome"] == "go"
+    assert out["skipped"] == 5 and out["clock"] == "perl"  # every bad name and value, not junk
 
 
-@pytest.mark.parametrize("go", ["released_ms=1 by=a\n", "released_ms=1 by=a count=0x1\n", ""])
-def test_spread_gives_a_null_released_count_for_a_go_without_a_valid_count(
+@pytest.mark.parametrize(
+    "go",
+    [
+        "released_ms=1 by=a\n",
+        "released_ms=1 by=a count=0x1 clock=sundial\n",
+        'released_ms=1 by=a count=x clock=b"a\n',
+        "",
+    ],
+)
+def test_spread_gives_a_null_released_count_and_clock_for_a_go_without_valid_ones(
     tmp_path: Path, go: str
 ) -> None:
     (tmp_path / "go").write_text(go)
     out = json.loads(run("spread", str(tmp_path)).stdout)
-    assert out["outcome"] == "go" and out["released_count"] is None
+    assert out["outcome"] == "go" and out["released_count"] is None and out["clock"] is None
 
 
 def test_spread_on_an_abandoned_folder_says_so(tmp_path: Path) -> None:
     assert finish([start(tmp_path, "solo", 3, 1)]) == [75]
     out = json.loads(run("spread", str(tmp_path)).stdout)
     assert out["outcome"] == "abandoned" and out["count"] == 1 and out["spread_ms"] is None
-    assert out["released_count"] is None
+    assert out["released_count"] is None and out["clock"] is None
 
 
 def test_the_script_passes_bash_n() -> None:
