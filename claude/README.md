@@ -8,12 +8,15 @@ tested, reviewed, and reverted like any other code:
   `wave-execution.md`.
 - `agents/`: the typed subagents (`drafter`, `implementer`, `implementer-risky`,
   `adjudicator`, `plan-advisor`, `wave-reviewer`, `wave-reviewer-domain`,
-  `branch-reviewer`, `researcher`, `reader`, `qa-tester`, and `adversarial-tester`).
+  `branch-reviewer`, `researcher`, `reader`, `qa-tester`, `adversarial-tester`, and
+  `security-tester`).
   Each one pins its own `model`, so a dispatch that names one never inherits the
   session's model.
 - `skills/qa-swarm/`: the QA swarm orchestrator skill, its guides (`browser.md`,
-  `scenarios.md`, `collisions.md`, and `report-format.md`), and `barrier.sh`, the file
-  barrier that collision scenarios use.
+  `scenarios.md`, `collisions.md`, `security.md`, and `report-format.md`), `barrier.sh`,
+  the file barrier that collision scenarios use, and `loadgen.py`, the load generator
+  that `[load]` in a project's `qa.toml` drives (it needs Python 3.11 or newer and
+  nothing else).
 - `hooks/`: the `PreToolUse` hooks, `agent_model_guard.py`, `cd_only_reminder.py`,
   and `qa_tester_guard.py`.
 - `settings-hooks.json`: the hook fragment that registers those hooks.
@@ -46,13 +49,15 @@ tested, reviewed, and reverted like any other code:
   set).
 - **`cd_only_reminder.py`** adds a note when a Bash call only runs `cd`, because the
   Bash tool's working directory resets before the next call. It never blocks.
-- **`qa_tester_guard.py`** guards the QA swarm's tester agents (`qa-tester` and
-  `adversarial-tester`). Each tester agent's
+- **`qa_tester_guard.py`** guards the QA swarm's tester agents (`qa-tester`,
+  `adversarial-tester`, and `security-tester`). Each tester agent's
   frontmatter references it, so it isn't registered in `settings-hooks.json` (that
   file registers hooks for every session), and it applies to the tester agents only.
   It denies a `.env` read, the dev key, a loopback port that isn't the run's, and a
   write outside the run's `testers/` folder, and it appends every command to
-  `testers/<name>/commands.log`. It's best effort. Like the others, its command fails
+  `testers/<name>/commands.log`. It denies the backend's direct port (the run's
+  `direct_ports`) to every agent except a `security-tester`, which may probe it for a
+  finding labeled "direct backend". It's best effort. Like the others, its command fails
   open: a missing file or a crash exits `0`.
 
 Each hook command fails open: a missing hook file or a crashed hook exits `0`. That
@@ -74,5 +79,5 @@ once. Keep the main checkout on `main`, and do other work in a worktree.
 2. Restore `~/.claude/settings.json` from its timestamped backup, then validate it
    with `python3 -m json.tool`.
 3. To remove the QA swarm skill, remove the `~/.claude/skills/qa-swarm` symlink. The
-   `qa-tester` and `adversarial-tester` agents, the barrier script, and the guard hook go
-   away with a revert of the `sebby` branch.
+   `qa-tester`, `adversarial-tester`, and `security-tester` agents, the barrier script,
+   the load generator, and the guard hook go away with a revert of the `sebby` branch.

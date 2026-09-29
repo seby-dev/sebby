@@ -56,6 +56,21 @@ def test_the_readme_says_the_barrier_needs_no_execute_bit() -> None:
 def test_rollback_covers_both_agents_and_the_barrier() -> None:
     body = " ".join(text().split())
     assert (
-        "`qa-tester` and `adversarial-tester` agents, the barrier script, and the guard hook"
-        in body
+        "`qa-tester`, `adversarial-tester`, and `security-tester` agents, the barrier script,"
+        " the load generator, and the guard hook" in body
     )
+
+
+def test_the_asset_list_names_the_security_tester_the_load_generator_and_the_security_guide() -> (
+    None
+):
+    body = " ".join(text().split())
+    for needle in ("`security-tester`", "`loadgen.py`", "`security.md`"):
+        assert needle in body, needle
+    assert "needs Python 3.11 or newer and nothing else" in body
+
+
+def test_the_hooks_section_says_the_direct_port_is_for_the_security_tester_only() -> None:
+    body = " ".join(text().split())
+    assert "`qa-tester`, `adversarial-tester`, and `security-tester`" in body
+    assert "denies the backend's direct port" in body and 'labeled "direct backend"' in body
