@@ -470,3 +470,70 @@ def test_denies_more_loopback_spellings(command: str, active: Path) -> None:
 )
 def test_denies_more_write_forms(command: str, active: Path) -> None:
     assert "inside the repository" in denied(run_hook(bash(command), active)[1]), command
+
+
+# Branch-gate fixes: `protected_roots` in the pointer.
+
+
+@pytest.fixture
+def protected(tmp_path: Path, run_dir: Path) -> Path:
+    file = tmp_path / "qa-active-protected.json"
+    pointer = {
+        "run_dir": str(run_dir),
+        "repo_root": "/repo/app",
+        "ports": [5173],
+        "protected_roots": ["/tmp/qa-planted", 7, None, "relative/wt", ""],
+    }
+    file.write_text(json.dumps(pointer))
+    return file
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo x > /tmp/qa-planted/web/src/a.ts",
+        "sed -i s/a/b/ /tmp/qa-planted/web/package.json",
+        "rm -r /tmp/qa-planted/web",
+        "cp /tmp/a /tmp/qa-planted/",
+        "cd /tmp/qa-planted && touch x",
+    ],
+)
+def test_bash_writes_into_a_protected_root_are_denied(command: str, protected: Path) -> None:
+    assert "inside the repository" in denied(run_hook(bash(command), protected)[1]), command
+
+
+def test_the_repo_root_stays_protected_alongside_protected_roots(protected: Path) -> None:
+    assert denied(run_hook(bash("echo x > /repo/app/a.py"), protected)[1])
+    assert denied(run_hook(write("/repo/app/a.py"), protected)[1])
+
+
+def test_write_tools_into_a_protected_root_are_denied(protected: Path) -> None:
+    assert denied(run_hook(write("/tmp/qa-planted/web/src/a.ts"), protected)[1])
+    edit = {"tool_name": "Edit", "tool_input": {"file_path": "/tmp/qa-planted/a.ts"}, "cwd": "/"}
+    assert denied(run_hook(edit, protected)[1])
+
+
+def test_write_tools_into_a_protected_root_are_denied_with_no_run_dir(tmp_path: Path) -> None:
+    file = tmp_path / "qa-active.json"
+    file.write_text(json.dumps({"ports": [5173], "protected_roots": ["/tmp/qa-planted"]}))
+    assert denied(run_hook(write("/tmp/qa-planted/a.ts"), file)[1])
+    assert run_hook(write("/tmp/elsewhere/a.ts"), file) == (0, "")
+
+
+def test_protected_roots_ignore_bad_entries_and_allow_other_writes(
+    protected: Path, run_dir: Path
+) -> None:
+    assert run_hook(bash("echo x > /tmp/other/a.txt"), protected) == (0, "")
+    assert run_hook(bash("touch relative/wt/x", cwd="/tmp"), protected) == (0, "")
+    assert run_hook(bash("cat /tmp/qa-planted/web/src/a.ts"), protected) == (0, "")
+    inside = run_dir / "testers" / "qa-1" / "note.md"
+    assert run_hook(bash(f"echo x > {inside}"), protected) == (0, "")
+    assert run_hook(write(str(inside)), protected) == (0, "")
+
+
+def test_a_non_list_protected_roots_changes_nothing(tmp_path: Path) -> None:
+    file = tmp_path / "qa-active.json"
+    pointer = {"repo_root": "/repo/app", "ports": [5173], "protected_roots": "/tmp/qa-planted"}
+    file.write_text(json.dumps(pointer))
+    assert run_hook(bash("touch /tmp/qa-planted/x"), file) == (0, "")
+    assert denied(run_hook(bash("touch /repo/app/x"), file)[1])

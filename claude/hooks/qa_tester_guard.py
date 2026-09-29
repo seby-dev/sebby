@@ -13,7 +13,9 @@ obfuscation), the dev key, the run's private folder, the eval and extraction scr
 `process.env`, `%ENV`, `getenv()`, `ps e`), `qa_env` outside `scenario-run`, `git push`,
 `git commit`, `playwright-cli close-all` and `kill-all`, and the git verbs that edit or hide the
 tree under test, a loopback port that isn't the run's own, and a write outside the run's
-`testers/` folder or into the repository.
+`testers/` folder or into the repository. The pointer's optional `protected_roots` list (absolute
+paths, such as a planted-defect worktree) is protected from writes the same way as `repo_root`;
+a non-string or relative entry is ignored.
 It appends every command to `testers/<name>/commands.log`.
 
 Known limits: the Write check can't tell one tester's folder from another's, so a tester can
@@ -170,6 +172,15 @@ def _folder(active: dict[str, object] | None, key: str) -> Path | None:
     return Path(value) if isinstance(value, str) and value else None
 
 
+def _protected(active: dict[str, object] | None) -> list[Path]:
+    """`repo_root` plus every absolute string in the optional `protected_roots` list."""
+    roots = [root] if (root := _folder(active, "repo_root")) else []
+    extra = active.get("protected_roots") if active else None
+    if isinstance(extra, list):
+        roots += [Path(p) for p in extra if isinstance(p, str) and p and Path(p).is_absolute()]
+    return roots
+
+
 def _under(path: Path, folder: Path) -> bool:
     # No exception is caught here: an unresolvable path reaches main, which fails closed.
     return path.resolve().is_relative_to(folder.resolve())
@@ -292,12 +303,19 @@ def _path_of(tool_input: dict[str, object]) -> str:
     return str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
 
 
-def _decide_file(tool: str, raw: str, cwd: str, testers: Path | None) -> str | None:
+def _decide_file(
+    tool: str, raw: str, cwd: str, testers: Path | None, protected: list[Path]
+) -> str | None:
     for pattern, what in PATH_DENIALS:
         if pattern.search(raw):
             return f"This path is {what}, which QA testers may not use."
-    if tool in WRITE_TOOLS and testers is not None and not _under(_resolve(raw, cwd), testers):
+    if tool not in WRITE_TOOLS:
+        return None
+    path = _resolve(raw, cwd)
+    if testers is not None and not _under(path, testers):
         return f"{tool} is limited to {testers}."
+    if testers is None and any(_under(path, root) for root in protected):
+        return f"{tool} would write {path}, inside the repository under test."
     return None
 
 
@@ -320,11 +338,11 @@ def decide(payload: dict[str, object], active: dict[str, object] | None) -> str 
         return None
     cwd = str(payload.get("cwd") or "/")
     run_dir = _folder(active, "run_dir")
-    repo_root = _folder(active, "repo_root")
+    protected = _protected(active)
     testers = run_dir / "testers" if run_dir else None
 
     if tool in READ_TOOLS or tool in WRITE_TOOLS:
-        return _decide_file(tool, _path_of(tool_input), cwd, testers)
+        return _decide_file(tool, _path_of(tool_input), cwd, testers, protected)
     if tool != "Bash":
         return None
 
@@ -338,9 +356,10 @@ def decide(payload: dict[str, object], active: dict[str, object] | None) -> str 
             for match in pattern.findall(command):
                 if int(match) not in ports:
                     return f"Port {match} isn't this run's instance; its ports are {sorted(ports)}."
-    if repo_root is not None:
+    if protected:
         for path in _writes(command, cwd):
-            if _under(path, repo_root) and not (testers and _under(path, testers)):
+            inside = any(_under(path, root) for root in protected)
+            if inside and not (testers and _under(path, testers)):
                 return f"This command writes {path}, inside the repository under test."
     return None
 
