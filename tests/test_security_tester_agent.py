@@ -103,7 +103,8 @@ def test_it_labels_direct_backend_probes_and_limits_them_to_the_charters_port() 
     for needle in (
         '"direct backend"',
         'lists a "direct backend port"',
-        "The guard denies the port to every other agent",
+        "The guard lets only you reach that port.",
+        "It can't tell what the probe is for, so keeping to access-control probes is on you.",
         "the two sound hosts",
     ):
         assert needle in text, needle
@@ -191,3 +192,20 @@ def test_the_cost_cap_probe_is_named_as_the_one_photo_read_and_runs_alone() -> N
         "put the cap back when you finish",
     ):
         assert needle in text, needle
+
+
+def test_the_cost_cap_probe_says_a_422_is_malformed_never_held() -> None:
+    text = body()
+    for needle in (
+        "Send the probe exactly as `security.md` writes it",
+        "a real PNG in the `files` field, with `key` and `beats_per_bar`",
+        "a `422` means the probe is malformed, so fix it and never record it as held",
+        "only a `402` with the budget sentence means the cap held",
+    ):
+        assert needle in text, needle
+    assert "file=@one.png" not in text
+
+
+def test_tokens_go_through_the_guides_scripts_never_a_command() -> None:
+    text = body()
+    assert "a share URL into a `curl` config, and a sign-in email into a consume body" in text

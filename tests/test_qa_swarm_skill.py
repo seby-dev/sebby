@@ -335,3 +335,43 @@ def test_vision_forbidden_lines_from_the_probe_are_reported_as_expected() -> Non
     assert "the `vision_forbidden` lines that a `security-tester`'s cost-cap probe caused" in text
     assert "are expected: report them as its probe's, with their count" in text
     assert "not as a route that tried a billed call" in text
+
+
+def test_loadgen_refuses_a_state_file_with_no_cookie_and_stops_on_gateway_errors() -> None:
+    text = body()
+    for needle in (
+        "a `--state` file with no cookie for the site",
+        "five failures in a row: connection failures, or `502`, `503`, or `504` from the proxy",
+        "`stop_reason` names them",
+        "`error_types` counts each connection failure by its type",
+    ):
+        assert needle in text, needle
+
+
+def test_start_lists_the_outbox_among_its_fields() -> None:
+    text = body()
+    assert "`start` prints one JSON object with, among others, `run_dir`" in text
+    assert "`outbox` (the folder the run's mail lands in)" in text
+
+
+def test_the_security_charter_names_the_outbox_and_the_identities_file() -> None:
+    text = body()
+    for needle in (
+        "the run's outbox (`outbox` in `start`'s output)",
+        "the path of `<run folder>/env/identities.json`",
+    ):
+        assert needle in text, needle
+
+
+def test_the_restart_phase_reads_exit_2_null_checks_and_the_previous_outcome() -> None:
+    text = body()
+    for needle in (
+        "exit 2: not a started run folder or a usage error; report stderr (it also prints a JSON"
+        " line with `restarted: false`)",
+        "`same: null` or `mailed_after: null` with an `error` means that check couldn't run;"
+        " report it as not checked, not as a finding",
+        "`previous` is how the old backend ended: `stopped`, or `gone`",
+        "`gone` means the backend had died before the restart, which is a finding",
+        "`limited_before: true` after a heavy batch can come from the per-client limit",
+    ):
+        assert needle in text, needle
