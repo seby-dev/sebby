@@ -26,8 +26,11 @@ Octomind, a hosted test-agent service, shut down in May 2026. That is a
 reason to own the executor instead of renting one.
 
 This spec designs `sebby.browser`, an LLM browser test agent behind a new
-optional extra, `sebby[browser]`. staff2solfa installs it by git tag and
-plugs it in behind the swarm's executor interface, in place of jev.
+optional extra, `sebby[browser]`. Its step engine is jev-ultrafast, forked:
+the snapshot, the questions, the choose-and-validate logic, and the step loop
+are copied from jev and extended. The layers around the engine are new.
+staff2solfa installs the package by git tag and plugs it in behind the
+swarm's executor interface, in place of the vendored jev.
 
 ## Claim and prior art
 
@@ -51,6 +54,10 @@ What the survey found, and where this design differs:
 No surveyed tool treats a collision point as a first-class concept. This spec
 doesn't claim the combination is novel beyond that survey.
 
+The step engine isn't part of the claim. It's jev-ultrafast, forked (see
+"The jev fork"). The claim concerns the layers around it: the multi-actor
+runtime, the trace store, the oracles, and the invariants.
+
 ## Goals
 
 - Run a test written as a natural-language goal, or as a scripted step, in
@@ -62,8 +69,10 @@ doesn't claim the combination is novel beyond that survey.
 - Check invariants after every step, and domain state through plugins.
 - Plug in behind the swarm's executor interface, and declare multi-actor
   support.
+- Fork jev's step engine and change it in small, named steps, so the diff
+  against upstream shows every change.
 - Keep the dependency set small: `typesafe-sdk` (already in the `judgement`
-  extra) and one WebSocket library.
+  extra), `sebby[llm]` for the text model, and one WebSocket library.
 
 ## Non-goals
 
@@ -97,12 +106,130 @@ doesn't claim the combination is novel beyond that survey.
 - **Invariant:** a check that runs after every step and doesn't depend on the
   scenario, such as "no 5xx response."
 
+## The jev fork
+
+The step engine is jev-ultrafast, forked. `sebby.browser` doesn't redesign
+what jev proved: one atomic DOM snapshot, one operation chosen from a fixed
+set by TypeSafe `system_one`, then execution in code. jev is MIT-licensed, so
+the fork copies its code and extends it. What's new is the layers around the
+engine: the isolated browser pool, the trace store, the multi-actor runtime,
+and the oracles.
+
+**Source and license.** The source is
+`tests/ui_jev/vendor/jev_ultrafast/` in staff2solfa, which
+`tests/ui_jev/vendor/VENDORED.md` there records as a verbatim copy of
+`https://github.com/browser-use/jev-ultrafast` at commit
+`452c1ad2dd628008f1d5608f28158d76e49e6cc0`. The fork ships upstream's MIT
+license, "Copyright (c) 2026 Browser Use," as
+`src/sebby/browser/LICENSE.jev-ultrafast`, which the license requires it to
+keep with the copied code. `src/sebby/browser/FORKED.md` records the upstream
+repository and commit, the list of forked files with the SHA-256 of each
+verbatim upstream file, the license file, and the rule for changes (below).
+
+**Where each piece goes.** All destinations are in `src/sebby/browser/`, and
+the forked modules keep jev's file names, so a diff against upstream stays
+readable.
+
+| jev source | Destination | What happens |
+|---|---|---|
+| `snapshot.js` | `snapshot.js` | Forked and extended: the locator ladder, and file inputs as `upload` elements. |
+| `questions.py` | `questions.py` | Forked and extended: `NEXT_ACTION` describes `UPLOAD` and `ASSERT`. |
+| `model.py`: `action_space`, `validate_choice`, `field_context` | `model.py` | Forked. `action_space` is extended, and the other two are kept. |
+| `model.py`: `choose` | `model.py` (build and interpret), `decider.py` (the call) | Forked and split. The call moves onto `typesafe-sdk`. |
+| `model.py`: `field_text` | `model.py` | Body replaced by an Anthropic call. The signature is kept. |
+| `model.py`: `post_json`, `CLIENT` | none | Deleted. The SDK replaces them. |
+| `agent.py` | `agent.py` | Forked and extended: hooks, `UPLOAD` and `ASSERT`, async. |
+| `browser.py` | `browser.py` | **Replaced.** See the following paragraph. |
+| `__init__.py` | `__init__.py` | Replaced by this package's public API. |
+
+**The one replaced file.** `browser.py` is the only jev file that the pool
+replaces. Its `ensure_daemon()`, its `browser_harness` calls, and its target
+on the developer's real, already-running Chrome are gone, and the isolated CDP
+pool (layer 1) takes their place. The `Browser` class and its `observe`,
+`fresh`, and `act` methods stay as the thin driver over one pool page, with
+jev's logic for each ported over the pool's `call`: the settle script in
+`observe`, `fresh`, `fingerprint`, and the hit test and input sequence in
+`browser_operation`. `StalePage` stays as jev has it.
+
+**Change record.** The first commit in slice A is the verbatim copy of the
+five files and the license, and it adds `FORKED.md`. It exempts the copied
+files from `sebby`'s ruff and mypy gates, because jev's style (120-character
+lines, no types) doesn't meet them. The second commit is a mechanical
+reformat and typing pass with no behavior change. After that, each change is
+its own commit, and its message names the jev function, for example
+`fork: split choose() into build, call, and interpret`. So `git diff` from the
+first commit shows every change made to jev, and a reader can ignore the
+second commit's whitespace.
+
+### What changes and what stays
+
+This table lists every jev function and constant, and its fate in the fork.
+
+| jev function | Fate | Change |
+|---|---|---|
+| `Agent.__init__` | Changed | Takes a pool page and no URL, and runs one goal per call. |
+| `Agent.snapshot` | Verbatim | |
+| `Agent.command` (`tick`) | Verbatim | Structure kept; becomes `async`. |
+| `Agent.command` (`predict`) | Changed | Asks a `DecisionSource` instead of calling `choose`. |
+| `Agent.command` (`act`) | Extended | Hooks, `UPLOAD` and `ASSERT` branches, text sources, invariants, `prepare` and `dispatch`. The `DONE` and `BLOCKED` branch, the budget check, and the stall rule stay as they are. |
+| `Agent.run` | Verbatim | Becomes an async generator. |
+| `Agent.close`, `__enter__`, `__exit__` | Changed | Async; close the page and not a whole browser. |
+| `StalePage` | Verbatim | |
+| `Browser.__init__` | Replaced | The pool opens and configures the page. |
+| `Browser.call`, `Browser.evaluate` | Verbatim logic | Route through the pool's `call`, which now has a timeout. |
+| `Browser.observe` | Extended | Settle script kept; adds the `settle_timeout` record and the dialog and popup hooks. Async. |
+| `Browser.fresh` | Verbatim logic | Async. |
+| `Browser.act`, `browser_operation` (act branch) | Extended | Split into `prepare` (freshness and hit test) and `dispatch` (the input events). |
+| `Browser.close` | Replaced | Closes the page target through the pool. |
+| `fingerprint` | Verbatim | Kept for the stall rule. |
+| `browser_operation` (observe branch) | Verbatim logic | Async. |
+| `validate_choice` | Verbatim | Reads attributes of the SDK's answer object. Both response checks stay. |
+| `action_space` | Extended | Adds `upload` and `assert` kinds. |
+| `choose` | Split | `build_questions` and `interpret` verbatim; the call moves to the SDK. |
+| `field_context` | Verbatim | |
+| `field_text` | Body replaced | Anthropic, Haiku 4.5. Same signature and return value. |
+| `post_json`, `CLIENT` | Deleted | The SDK replaces them. |
+| `NEXT_ACTION` | Extended | Two added sentences. |
+| `TARGET`, `TEXT_VALUE`, `MAX_STEPS` | Verbatim | |
+| `snapshot.js` | Extended | Ladder, file inputs. The rest verbatim. |
+
+### Where the fork isn't an extension
+
+Most changes add to jev's code. These don't, and each has a reason.
+
+- **Async.** jev's `Agent` is synchronous: `Agent.run` is a generator that
+  blocks on `browser_harness` calls, and `Browser` sleeps with `time.sleep`.
+  The runtime runs every actor as an asyncio task in one process and releases
+  a collision through an `asyncio.Barrier`, so a blocking step loop can't
+  share the loop. The conversion is mechanical: `def` becomes `async def`,
+  each call into the browser, the decider, or a hook takes `await`,
+  `time.sleep` becomes `asyncio.sleep`, and `run` becomes an async generator.
+  It touches every function in `agent.py` and `browser.py` without changing
+  their logic.
+- **One goal per `Agent`, and the browser is passed in.** `Agent.__init__`
+  builds its own `Browser(url)` and takes one task. A scenario gives an actor
+  several goals over the actor's lifetime on one browser that the pool owns.
+- **The atomic act.** `browser_operation`'s `act` branch does the freshness
+  check, the hit test, and the input events in one call. A collision has to do
+  the first two, hold, and then do the third. The fork splits it at the
+  `elementFromPoint` check.
+- **The call in `choose`.** A raw HTTP call can't go behind the `Decider`
+  protocol. The split of `choose` keeps the surrounding lines verbatim.
+- **Popups.** jev holds one target. With the `follow` popup policy, the pool
+  can change an actor's current page, so `Browser` reads its page from the pool
+  on each call and doesn't cache a session ID.
+- **The page hash.** jev's `fingerprint` is an exact SHA-256 that includes
+  body text. Replay needs a closeness score over normalized elements, so
+  `hashing.py` is new code beside `fingerprint`, not an edit to it.
+
 ## Architecture
 
 Five layers. Each has its own tests, and a layer can be tested with fakes
 for the others. Layers communicate through small interfaces and hooks: the
 pool exposes hooks for dialogs, popups, and crashes, and the engine and the
 runtime register handlers for them. A lower layer never imports a higher one.
+
+Layer 2 is the jev fork. The other four layers are new.
 
 ```text
 5. Oracles        invariants after every step; domain oracles by entry point
@@ -118,8 +245,9 @@ The executor adapter sits beside layer 4 and drives the same layers through
 ### Layer 1: browser pool
 
 The pool starts and owns one headless Chromium per actor, and drives it
-directly over the Chrome DevTools Protocol (CDP). It uses no
-`browser_harness` daemon.
+directly over the Chrome DevTools Protocol (CDP). It replaces jev's
+`browser.py`: there's no `browser_harness` daemon, and no use of the
+developer's own Chrome.
 
 **Launch mode.** Used by the pytest runtime. For each actor the pool:
 
@@ -303,38 +431,57 @@ runs no sweep. It closes only the targets it opened.
 
 ### Layer 2: step engine
 
-The engine rebuilds jev's proven core. Its snapshot builds on the ideas in
-jev's `snapshot.js`, rewritten for this package and not vendored.
+The step engine is the fork of jev-ultrafast described in "The jev fork."
+This section describes what the engine does and names, for each part, the
+jev function it comes from and how the fork changes it.
 
-**Snapshot.** One `Runtime.evaluate` call returns everything the step needs,
-so the page can't change between reads. It returns:
+**Snapshot (fork of `snapshot.js`).** One `Runtime.evaluate` call returns
+everything the step needs, so the page can't change between reads. jev's
+script already returns:
 
 - The URL, title, and up to 6,000 characters of visible text.
 - Up to 250 actionable elements, each with a role, an accessible name
   (`aria-labelledby`, `aria-label`, labels, then text, then `title`, then
   `placeholder`), state (`checked`, `expanded`, `selected`, `disabled`), and a
   current value.
-- For each element, the **locator ladder** the trace needs, captured now so
-  recording and replay share one code path (see layer 3): a test ID
-  (`data-testid`, or a configured attribute), role plus accessible name, nearby
-  text, and the position among siblings.
-- A stable node handle, kept in a page-side `WeakMap`, so an execute step
-  reaches the same element the snapshot described.
-- A per-element guard: a digest of the element's state and its enclosing
-  form or row. The engine recomputes it just before acting, and a mismatch
-  raises `StalePage`, as jev does.
+- A stable node handle, kept in a page-side `WeakMap` (`window.__jevFast`),
+  so an execute step reaches the same element the snapshot described.
+- A per-element guard (`cache.guard`): a digest of the element's state and its
+  enclosing form or row. The engine recomputes it just before acting, and a
+  mismatch raises `StalePage`.
+- A `marker` and a `page_key` for freshness checks.
 - Excluded: password and hidden inputs (their values never reach the model).
-  File inputs are included with kind `upload` and no value.
 
-Every page runs with `Emulation.setFocusEmulationEnabled`, as jev does, so
-animation frames and menus render in a background tab.
+The fork changes the script in three places, and leaves the rest verbatim:
 
-**Operation set.** jev's set, plus two:
+- **The locator ladder.** For each element, the script adds a `ladder` to the
+  action it already builds: a test ID (`data-testid`, or a configured
+  attribute), the role plus accessible name it already computes, nearby text,
+  and the position among siblings (a path of `nth-of-type` steps). Layer 3
+  needs it, and capturing it here lets recording and replay share one code
+  path. The `guards`, `marker`, and `page_key` computations don't read it, so
+  freshness behaves as in jev.
+- **File inputs.** jev's `safe()` filter drops `file` inputs. The fork lets a
+  file input through with kind `upload` and no value, and skips the
+  `visible()` test for it, because file inputs are often visually hidden. The
+  filter still drops `password` and `hidden`.
+- **Nothing else.** The visibility test, the accessible-name function, the
+  role table, the 250-action cap, the scroll and wait controls, and the text
+  walk stay as they are.
+
+Every page also runs with `Emulation.setFocusEmulationEnabled`, as jev's
+`Browser.__init__` does, so animation frames and menus render in a background
+tab. The pool applies it, because the pool now owns page setup.
+
+**Operation set (extends `model.action_space`).** jev's set, plus two.
+`action_space` already maps each action `kind` to an operation and builds one
+target question per operation, so the fork adds two kinds and their
+operations:
 
 | Operation | Meaning | Chosen by |
 |---|---|---|
 | `CLICK` | Click an element, menu option, or suggestion. | Decider |
-| `TYPE_TEXT` | Replace the text in an editable field. | Decider picks the field; text model or scenario supplies the text. |
+| `TYPE_TEXT` | Replace the text in an editable field. | Decider picks the field; `field_text` or the scenario supplies the text. |
 | `SELECT` | Choose an option in a `<select>`. | Decider |
 | `SCROLL` | Scroll by a fixed amount. | Decider |
 | `WAIT` | Wait for the page to settle. | Decider |
@@ -356,18 +503,24 @@ rules keep the model from inventing what to verify:
   or double quotes) of at least three characters. If it doesn't, the engine
   treats the choice as `BLOCKED`.
 
-The recorded predicate is what replay evaluates.
+The recorded predicate is what replay evaluates. `questions.py` changes to
+match: `NEXT_ACTION` gains two sentences that describe `UPLOAD` and `ASSERT`,
+and `TARGET` and `TEXT_VALUE` stay verbatim.
 
-**Decider protocol.** The decision engine sits behind a small interface:
+**Decider protocol.** The decision engine sits behind a small interface. A
+`Decision` is a typed view of the dict that jev's `choose` already returns
+(`choice`, `operation`, `target`, `confidence`, `probabilities`, `usage`,
+and the raw answers), with three added fields:
 
 ```python
 @dataclass(frozen=True)
 class DecisionRequest:
     goal: str
-    page: PageView                  # url, title, text, elements
-    history: Sequence[StepSummary]  # the last 10 steps
+    page: PageView                  # url, title, text, elements: jev's `state`
+    history: Sequence[StepSummary]  # the last 10 steps, as jev sends them
     allowed: frozenset[Operation]
     files: Sequence[str]            # declared upload names
+    observe: Callable[[], Awaitable[PageView]]   # a fresh snapshot, for replay
 
 @dataclass(frozen=True)
 class Decision:
@@ -384,32 +537,53 @@ class Decider(Protocol):
     async def decide(self, request: DecisionRequest) -> Decision: ...
 ```
 
-**Default decider.** `TypeSafeDecider` uses TypeSafe `system_one`, through
-sebby's existing path and not raw `httpx`. The SDK supports this. The
-`typesafe-sdk` 0.6.0 package, already the `judgement` extra, ships an
-`AsyncTypeSafeClient` whose `system_one(state, questions, model=..., retry=...)`
-accepts `Choice` questions, and its `ChoiceAnswer` carries `choice`,
-`confidence`, and `probabilities`, which is what jev's request needs. The
-decider:
+Replay is a `Decider` too. `ReplayDecider` resolves the recorded step against
+the current snapshot and returns the decision that step encodes, and it holds a
+live `Decider` to call for a heal (layer 3). The step loop doesn't know
+whether a decision came from the model or the trace.
 
-- Builds the client with `sebby.judgement.make_client(api_key=...,
-  client_cls=AsyncTypeSafeClient)`.
-- Sends one request per step, as jev does: an `operation` question over the
-  allowed operations, and one target question per operation that has
-  candidates (`click_target`, `type_text_target`, and so on). It reads the
-  target question that matches the chosen operation. For `ASSERT` it adds
-  `check` and `expected` questions.
-- Keeps jev's two response checks that the SDK doesn't perform (`model.py`,
-  `validate_choice`): the probability keys equal the offered labels, and the
-  chosen label has the highest probability. A response that fails either
-  check is an error and no action runs.
-- Reports usage through `sebby.judgement.record_usage`, so a run's TypeSafe
-  spend flows through the same `UsageRecord` callback as `sebby.llm`.
-- Sets the model from `SEBBY_BROWSER_MODEL`, with `jev-latest` as the default
-  that `make_client` already uses.
+**Default decider: `choose` moves onto the SDK.** jev's `model.py` calls
+TypeSafe through raw `httpx`: `post_json` posts to `/v1/systemone`, with its
+own retry loop. The fork moves the call onto `typesafe-sdk`, behind
+`TypeSafeDecider`, and doesn't keep the raw `httpx` path. The reasons:
+
+- sebby already has a supported path (`sebby.judgement`), and the SDK's API and
+  its retry header have been verified against the installed 0.6.0 package.
+- The `VENDORED.md` in staff2solfa accepted two client paths only because the
+  files were kept verbatim. A fork gives up that constraint.
+- The SDK accepts jev's question dictionaries as they are (`QuestionModel`),
+  so the code that builds them doesn't change.
+
+The cost is that `model.py` no longer diffs cleanly against upstream. The
+fork limits it by splitting `choose` into three pieces and leaving the first
+and third verbatim:
+
+1. `build_questions(state, goal, history)`: every line of `choose` from the
+   start through the `body` dict, unchanged, returning the questions, the
+   `state`, and the operation, target, and control tables.
+2. The call: `client.system_one(state, questions, model=...)` on an
+   `AsyncTypeSafeClient` from `sebby.judgement.make_client(api_key=...,
+   client_cls=AsyncTypeSafeClient)`. This replaces the `post_json` line and
+   the `os.environ["TYPESAFE_API_KEY"]` read. The model comes from
+   `SEBBY_BROWSER_MODEL`, with `jev-latest` as the default that jev and
+   `make_client` share.
+3. `interpret(...)`: every line after the call, unchanged except that answer
+   fields are read as attributes of the SDK's `ChoiceAnswer` and not as
+   dictionary keys.
+
+`validate_choice` stays and runs on every answer. It includes jev's two
+response checks that the SDK doesn't perform: the probability keys equal the
+offered labels, and the chosen label has the highest probability. A response
+that fails a check is an error, and no action runs. For `ASSERT`, the call
+adds `check` and `expected` questions, built by the extended `action_space`.
+
+`TypeSafeDecider` reports usage through `sebby.judgement.record_usage`, so a
+run's TypeSafe spend flows through the same `UsageRecord` callback as
+`sebby.llm`.
 
 **Retry accounting.** The SDK's default policy retries twice, within a
-30-second budget, on HTTP 408, 429, and 5xx. It sets an
+30-second budget, on HTTP 408, 429, and 5xx. It replaces `post_json`'s own
+loop, which retried three times on 429, 503, and 529. The SDK sets an
 `X-TypeSafe-Retry-Count` header on each retried attempt (`transport.py`,
 `attempt`). The decider reads the header from
 `response.raw_http_response.request.headers`, treats a missing header as zero,
@@ -418,28 +592,31 @@ one billed call, which is the conservative reading. An SDK error that
 survives its retries (`TypeSafeAPIError` and its subclasses) ends the step as
 `error`.
 
-**Text model.** `TYPE_TEXT` needs a value. The value comes from one of three
-places, in this order:
+**Text model (replaces the body of `field_text`).** `TYPE_TEXT` needs a value.
+The value comes from one of three places, in this order:
 
 1. A literal in the scenario (`actor.type("Key", "G")`): no model call.
 2. A literal in the goal text, when the goal quotes it.
-3. A `TextModel`, behind the same kind of interface as the decider:
+3. `field_text(context)`.
 
-```python
-class TextModel(Protocol):
-    async def text_for(self, request: TextRequest) -> str | None: ...
-```
+`field_text` keeps jev's signature, `field_text(context) -> (text, helper)`,
+and its contract: it returns the text and a `helper` dict with `model`,
+`latency_ms`, and `usage`, and it raises `ValueError` when the model returns
+no valid value. Its body changes. jev's DeepSeek call, with its `TEXT_MODEL_*`
+environment variables and `post_json`, becomes an Anthropic call: Claude
+Haiku 4.5 (`claude-haiku-4-5-20251001`) through `sebby.llm.LLMClient`. The
+model ID is a setting, `SEBBY_BROWSER_TEXT_MODEL`, and the key comes from
+`ANTHROPIC_API_KEY` in the environment the host provides. The prompt
+(`TEXT_VALUE`), the context (`field_context`), and jev's validation of the
+reply (exactly one key `text`, a nonempty string of at most 2,000 characters)
+stay verbatim. Implementers load the `claude-api` skill before they write this
+code.
 
-The default `TextModel` is Anthropic. It calls Claude Haiku 4.5
-(`claude-haiku-4-5-20251001`) through `sebby.llm.LLMClient`, which is
-synchronous. It runs the call through `asyncio.to_thread`, so a model call
-never blocks the event loop that the other actors share. The model ID is a
-setting, `SEBBY_BROWSER_TEXT_MODEL`, and a host can pass any other
-`TextModel`. jev used a DeepSeek model for this call. The key comes from
-`ANTHROPIC_API_KEY` in the environment the host provides, and the package
-reads no other source. Implementers load the `claude-api` skill before they
-write this code. Returning `None` means the model found no valid value, and
-the step becomes `BLOCKED`. The engine never guesses.
+`LLMClient` is synchronous, and `field_text` stays synchronous with it. The
+step loop calls `await asyncio.to_thread(field_text, context)`, so a model call
+never blocks the event loop that the other actors share. A host can pass any
+other callable with the same signature. When `field_text` raises, the step
+becomes `BLOCKED`. The engine never guesses.
 
 **Keys belong to the host.** `sebby.browser` reads `TYPESAFE_API_KEY` and
 `ANTHROPIC_API_KEY` from its environment and nothing else. It doesn't open a
@@ -449,26 +626,46 @@ decides where a key lives: staff2solfa reads the TypeSafe key from another
 project's `.env` by reference, and passes it to the process that runs the
 executor.
 
-**Step loop.** For a goal, until `DONE`, `BLOCKED`, or a cap:
+**Step loop (fork of `agent.py`).** `Agent.command` already runs a goal as
+`tick`, which is `predict` then `act`, until `DONE`, `BLOCKED`, or a cap. The
+fork keeps that structure and the caps (`MAX_STEPS` of 60 actions and twice
+that in decisions, the stall rule) and changes these points:
 
-1. Snapshot the page.
-2. Ask the Decider for a decision. (In replay, resolve a recorded step
-   instead. See layer 3.)
-3. Check the guard for the chosen element.
-4. Execute: mouse events for `CLICK` after a hit test, `Input.insertText` for
-   `TYPE_TEXT`, the pool's file call for `UPLOAD`.
-5. Wait for the page to settle: two animation frames, or 200 ms for a
-   combobox, as jev does, up to a timeout of one second. A settle that times
-   out isn't a failure; the step records `settle_timeout`.
-6. Snapshot again, write the step record, and run the invariants.
+1. `predict` snapshots the page if it isn't fresh, then asks a
+   `DecisionSource` for a decision. The source is a live `Decider` or a
+   `ReplayDecider`. In jev this line calls `choose` directly.
+2. `act` keeps its order: consume the decision once, handle `DONE` and
+   `BLOCKED`, look up the action, check the budget, generate text for a
+   `fill`, execute, record, and observe again. The fork adds:
+   - a `before_step` hook after the decision and an `after_step` hook after
+     the step record is appended, which the trace store uses to record and
+     to compare hashes;
+   - `UPLOAD` and `ASSERT` branches beside the `fill` branch;
+   - the three text sources listed earlier, in front of the
+     `field_text` call;
+   - a call to the invariants after the second `observe`, with the step's
+     observation window.
+3. Execution is split in two, `prepare` and `dispatch` (see "Where the fork
+   isn't an extension"), so a collision can hold a prepared command.
+4. The settle rule is jev's, in `Browser.observe`: after an action it waits
+   for two animation frames, or for a timer that ends the wait at 50 ms (200
+   ms for an autocomplete). The timer is the timeout, so a page that never
+   paints doesn't stall a step. The fork records `settle_timeout` on the step
+   when the timer and not the frames ended the wait. It's not a failure.
+5. Late content: `ReplayDecider` calls `request.observe` to snapshot again
+   every 100 ms for up to 2 seconds before it classifies a target as zero or
+   several (layer 3). Live decisions don't wait.
 
 A goal also stops after three consecutive steps that leave the page
-unchanged, which is jev's stall rule.
+unchanged, which is jev's stall rule. jev's `fingerprint` (a SHA-256 of the
+URL, text, actions, and scroll) stays for this rule. It's exact and includes
+body text, so it isn't the page hash that layer 3 uses.
 
 **Directed steps.** `actor.click("Save")` is a one-step goal. The engine
 first tries to resolve the target by role plus accessible name against the
 snapshot. If exactly one element matches, no model call occurs. If none or
-several match, the Decider picks within the `CLICK` operation.
+several match, the Decider picks within the `CLICK` operation. This is a new
+function beside `Agent`, and it calls the fork's `prepare` and `dispatch`.
 
 ### Layer 3: trace store
 
@@ -1128,9 +1325,21 @@ masked in the history.
 
 ### Layout
 
+The files marked "fork" come from jev and keep its file names. See "The jev
+fork" for what each one changes.
+
 ```text
 src/sebby/browser/
+  LICENSE.jev-ultrafast  upstream's MIT license (Copyright (c) 2026 Browser Use)
+  FORKED.md            upstream repository and commit, file list and hashes
   __init__.py          public API: scenario, collide, run_goals, Decider, Oracle
+  snapshot.js          fork: the page-side snapshot script
+  questions.py         fork: the prompts and MAX_STEPS
+  model.py             fork: action_space, validate_choice, build_questions,
+                       interpret, field_context, field_text
+  agent.py             fork: the step loop, with hooks
+  browser.py           the driver over one pool page (replaces jev's Browser)
+  decider.py           Decider, DecisionRequest, TypeSafeDecider (the SDK call)
   cdp/
     client.py          the WebSocket client, timeouts, send_nowait, events
     session.py         flattened sessions, target management, auto-attach
@@ -1140,14 +1349,10 @@ src/sebby/browser/
   allowlist.py         entry parsing, canary, Fetch interception, navigation guard
   dialogs.py           the dialog and popup policies
   capture.py           console and network buffers
-  snapshot.js          the page-side snapshot script
-  snapshot.py          the snapshot's Python types
-  engine.py            the step loop, the operation set, the guard
-  decider.py           Decider, DecisionRequest, TypeSafeDecider
-  text.py              TextModel and the default wrapper
+  directed.py          directed steps (actor.click("Save"))
   locators.py          the locator ladder and target resolution
   trace.py             the trace schema, reader, writer, migrations
-  replay.py            replay rules, heals, outcome checks
+  replay.py            ReplayDecider, replay rules, heals, outcome checks
   hashing.py           normalization, BLAKE2b element sets, Jaccard
   runtime/
     dsl.py             @scenario, Move, cast, parallel
@@ -1173,7 +1378,8 @@ browser = [
 
 `sebby[judgement]` brings `typesafe-sdk`, and with it `httpx2`, `msgspec`, and
 `tenacity`. `sebby[llm]` brings `litellm`, which the default text model
-needs. The only dependency that no existing extra carries is `websockets`.
+needs. The fork drops what jev's imports pulled in: `browser-harness` and
+`httpx[http2]`. The only dependency that no existing extra carries is `websockets`.
 `pytest` isn't in the extra, because only a project that uses the DSL loads
 the plugin, and that project has pytest. The `dev` extra adds
 `sebby[browser]`. The package registers no `pytest11` entry point (see layer
@@ -1317,6 +1523,17 @@ and strict mypy gates.
   checks fails with `no_assertions`.
 - **Oracle loading.** A name clash between two oracles fails startup, and
   `OracleBase` supplies a default `after_step`.
+- **The fork's characterization tests.** Each jev function that the fork
+  keeps or extends has a test that fixes jev's behavior before and after the
+  change: `validate_choice` accepts and rejects the same answers, including
+  both response checks; `action_space` returns the same tables for the
+  original kinds, and adds `UPLOAD` and `ASSERT` for the new ones; `interpret`
+  returns the dict that jev's `choose` returned for the same answers;
+  `field_text` keeps its signature and its validation of the reply; and the
+  snapshot script's `marker`, `page_key`, and `guards` don't change when the
+  ladder is added.
+- **`FORKED.md`.** A test checks that it names the upstream commit, and that
+  every forked file and the license file exist and are listed.
 - **Retry accounting.** The decider reads `X-TypeSafe-Retry-Count` and
   records the attempts.
 - **The stale-pidfile sweep.** It signals a group only when the start time
@@ -1329,8 +1546,8 @@ run serially in one group, because each browser counts against the global
 limit of three browser-running agents (and the multi-actor tests start up to
 four browsers themselves).
 
-- Replay makes zero calls to the fake `Decider` and zero calls to the
-  `TextModel`, and in `replay-only` mode no `TypeSafeDecider` is constructed.
+- Replay makes zero calls to the fake `Decider` and zero calls to
+  `field_text`, and in `replay-only` mode no `TypeSafeDecider` is constructed.
 - A changed page (a renamed button) triggers exactly one heal. The test
   asserts the healed step's `op` and `target`, not its hashes, and the trace
   the run writes differs from the original in that one step.
@@ -1409,6 +1626,15 @@ run must be lower once traces exist. The measurement:
   must reach the recorded outcome, the cap bounds it, and `passed (healed)` is
   never a plain pass, so a person reviews each healed trace before promoting
   it.
+- **The fork drifts from upstream.** jev-ultrafast is a single-maintainer
+  project with no tagged releases, and the fork's `model.py` and `agent.py`
+  no longer diff cleanly against it. `FORKED.md` records the upstream commit
+  and the verbatim hashes, and each change is its own commit named for the jev
+  function it touches, so a future upstream fix is a small, findable merge. The
+  project accepts that fixes don't arrive on their own.
+- **License notice.** MIT requires the copyright and permission notice to
+  travel with the copied code. `LICENSE.jev-ultrafast` and `FORKED.md` carry
+  it, and the fork's files keep jev's notice.
 - **Trace size.** A page's element set can hold 250 four-byte hashes, about
   2 KB. The `pages` table stores each distinct page once, so a trace stays
   small, but a long scenario on many distinct pages grows.
@@ -1421,11 +1647,15 @@ agent-driven work with wave review, not measurements.
 
 | Slice | Contents | Estimate |
 |---|---|---|
-| A. Single actor | The CDP client (timeouts, crash handling, large results), the browser pool in launch and attach modes, browser-level auto-attach with child `Fetch` and `runIfWaitingForDebugger`, the PAC allowlist and canary, the `Fetch` cost measurement, dialogs and popups, capture, uploads (input and drop), teardown with the verified sweep, the snapshot, the step engine, `Decider` and `TypeSafeDecider` with retry accounting, the text model, the four invariants with the default ignore list, `run_goals` for one actor, and the single-actor swarm adapter in staff2solfa with `launch_flags`. Launch-mode storageState is left out. | About 22 hours |
-| B. Traces | Trace schema and store, the locator ladder and its refresh and heal rules, normalization and Jaccard hashing, replay rules and the late-content wait, heals and the cap, outcome checks and the verified-goal rule, the healed-trace write and `promote`, modes, the budget ledger, and their tests. | About 11 hours |
-| C. Multi-actor | The DSL and per-actor tasks, `cast` and `CastResolver`, launch-mode storageState, `collide` (held commands, isolated-world misfire check, three-way gap measure, barrier abort, ordering, `repeat` with prefix re-run), the oracle contract with `OracleBase`, `settled` and `eventually`, `expect` and `Observed`, the opt-in pytest plugin, the multi-actor adapter path with `script`, and the planted-defect acceptance run. | About 16 hours |
+| A. Single actor | **The fork, first:** the verbatim copy of jev's files with the license and `FORKED.md` (the first commit), the mechanical reformat and typing pass, then the named changes: async, `choose` onto the SDK behind `TypeSafeDecider` with retry accounting, `field_text` on Haiku 4.5, the ladder and file inputs in `snapshot.js`, `UPLOAD` and `ASSERT` in `action_space` and `questions.py`, the `prepare` and `dispatch` split, and the `before_step` and `after_step` and invariant hooks. **The new code:** the CDP client (timeouts, crash handling, large results), the browser pool in launch and attach modes with the driver in `browser.py`, browser-level auto-attach with child `Fetch` and `runIfWaitingForDebugger`, the PAC allowlist and canary, the `Fetch` cost measurement, dialogs and popups, capture, uploads (input and drop), teardown with the verified sweep, the four invariants with the default ignore list, `run_goals` for one actor, and the single-actor swarm adapter in staff2solfa with `launch_flags`. Launch-mode storageState is left out. | About 17 hours |
+| B. Traces | Trace schema and store, the trace hooks, `ReplayDecider`, the locator ladder and its refresh and heal rules, normalization and Jaccard hashing, replay rules and the late-content wait, heals and the cap, outcome checks and the verified-goal rule, the healed-trace write and `promote`, modes, the budget ledger, and their tests. | About 10 hours |
+| C. Multi-actor | The DSL and per-actor tasks, `cast` and `CastResolver`, launch-mode storageState, `collide` (held commands from the `prepare` and `dispatch` split, isolated-world misfire check, three-way gap measure, barrier abort, ordering, `repeat` with prefix re-run), the oracle contract with `OracleBase`, `settled` and `eventually`, `expect` and `Observed`, the opt-in pytest plugin, the multi-actor adapter path with `script`, and the planted-defect acceptance run. | About 16 hours |
 
-Total: about 49 hours.
+Total: about 43 hours, down from about 49 before the fork. The saving is in
+slice A: the snapshot, the questions, the choose-and-validate logic, and the
+step loop already exist, so slice A extends them and doesn't build them. The
+CDP pool, the allowlist, and the adapter don't shrink, because jev has nothing
+like them.
 
 Slice A alone replaces jev for single-actor scenarios, because it ships the
 staff2solfa adapter. That gives uploads, invariants, the port-aware allowlist,
@@ -1434,7 +1664,7 @@ B adds the cost reduction. Slice C adds what jev can't do. The acceptance run
 happens at the end of slice C, in staff2solfa, and depends on the swarm's own
 slices being merged.
 
-Slice A is the largest because the CDP work under it (dialogs, timeouts,
+Slice A is still the largest because the CDP work under it (dialogs, timeouts,
 auto-attach, child `Fetch`, the `runIfWaitingForDebugger` ordering, and crash
 handling) is on the critical path for every later slice. Slice C splits at the
 oracle contract if it runs long: collisions and the DSL (about 9 hours), then
@@ -1483,3 +1713,7 @@ Each item has a proposed answer, used in this spec until the user decides.
     same batch.
 11. **Release tags.** The spec assumes one `sebby` tag per slice, following
     the current `v0.2.0`, but doesn't fix the numbers.
+12. **Upstream contributions.** The fork's changes to jev are mostly
+    additions. Should the generic ones (file inputs, the ladder, the async
+    conversion) go back to `browser-use/jev-ultrafast` as pull requests, or
+    does the fork stay private?
