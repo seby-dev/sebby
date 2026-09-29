@@ -236,7 +236,8 @@ def test_a_waiter_stopped_while_writing_acted_drops_it_and_exits_75(
     # The shim renames, then sleeps once the acted- file is in place: a TERM in that window
     # arrives after the rename and before the waiter returns, so the action never ran.
     body = (
-        'for last; do :; done\n"$REAL" "$@" || exit\ncase "${last##*/}" in acted-*) sleep 3 ;; esac'
+        'for last; do :; done\n"$REAL" "$@" || exit\n'
+        'case "${last##*/}" in acted-*) sleep 10 ;; esac'
     )
     env = shim_path(shim_dir(tmp_path, "mv", body))
     folder = tmp_path / "barrier"
@@ -291,11 +292,14 @@ def test_a_process_group_signal_inside_the_lock_step_never_leaves_pending(
 def test_a_parent_check_that_gets_eperm_keeps_waiting(tmp_path: Path) -> None:
     # `kill -0` fails with EPERM for a live parent owned by another user: not an orphan.
     eperm = (
-        '() { if [ "$1" = -0 ]; then echo "kill: ($2) - Operation not permitted" >&2;'
-        ' return 1; fi; builtin kill "$@"; }'
+        '() { if [ "$1" = -0 ]; then : >"$QA_EPERM_MARK";'
+        ' echo "kill: ($2) - Operation not permitted" >&2; return 1; fi; builtin kill "$@"; }'
     )
-    env = {"BASH_FUNC_kill%%": eperm}  # an exported function, which bash prefers to a builtin
+    mark = tmp_path.parent / f"{tmp_path.name}-eperm-called"
+    # An exported function, which bash prefers to a builtin; the marker proves bash imported it.
+    env = {"BASH_FUNC_kill%%": eperm, "QA_EPERM_MARK": str(mark)}
     result = run("wait", str(tmp_path), "a", "1", "5", env_extra=env)
+    assert mark.is_file(), "the kill shim never ran, so this test proves nothing"
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "acted-a").is_file() and not (tmp_path / "abandoned").exists()
 
