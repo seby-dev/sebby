@@ -17,17 +17,23 @@ It refuses, before it sends anything and with exit code 64, when:
   unless it starts with a scheme and `://`; an absolute URL is checked the same way and must use
   `site_url`'s scheme. The raw backend port isn't in `allowed_hosts`, and the sound hosts are for
   browser traffic only, so neither is ever a target;
-- a `body_file` is absolute or outside the repository (the parent of the `.claude/` folder);
-- `instance.json` names a `ca_file` that doesn't exist, or a `--state` cookie can't be sent
-  as a header.
+- a `body_file` is absolute, outside the repository (the parent of the `.claude/` folder), or
+  can't be read;
+- `instance.json` names a `ca_file` that doesn't exist, or a `--state` file holds no cookie for
+  the site's host or a cookie that can't be sent as a header.
 
 It never follows a redirect, sends the session cookie from `--state` without printing or logging
-it, and stops early after `STOP_AFTER_FAILURES` connection failures in a row (safety rule 6: stop
-if the instance stops responding). Once `duration + DURATION_GRACE_S` has passed it starts no
-request, and it waits at most `DRAIN_TIMEOUT_S` more for the ones in flight: any still running
-then is cut off (its socket shut, even mid TLS handshake) and counted as an error and in
-`cancelled`. So a run lasts at most `duration + DURATION_GRACE_S + DRAIN_TIMEOUT_S`, plus a moment
-(a TCP connect to a loopback port that never completes could add up to `REQUEST_TIMEOUT_S`).
+it, and stops early after `STOP_AFTER_FAILURES` failures in a row (safety rule 6: stop if the
+instance stops responding). A failure is a connection failure or a 502, 503, or 504, which a
+proxy answers when the backend behind it has died. The summary counts each connection failure
+by its exception type (`error_types`), so a TLS verification failure isn't read as a dead
+instance, and `stop_reason` names what the streak was.
+
+Once `duration + DURATION_GRACE_S` has passed it starts no request, and it waits at most
+`DRAIN_TIMEOUT_S` more for the ones in flight: any still running then is cut off (its socket
+shut, even mid TLS handshake) and counted as an error (`DrainTimeout`) and in `cancelled`. So a
+run lasts at most `duration + DURATION_GRACE_S + DRAIN_TIMEOUT_S`, plus a moment (a TCP connect
+to a loopback port that never completes could add up to `REQUEST_TIMEOUT_S`).
 It writes `<run folder>/load/summary.json` and prints it.
 
 Exit codes: 0 finished, 3 stopped early, 64 refused or a usage error (nothing was sent).
@@ -63,6 +69,7 @@ SUPPORTED_SCHEMA = 1
 METHODS = ("GET", "HEAD", "POST")
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 STOP_AFTER_FAILURES = 5
+GATEWAY_STATUSES = frozenset({502, 503, 504})  # a proxy's answer for a backend that has died
 DURATION_GRACE_S = 1.0
 DRAIN_TIMEOUT_S = 10.0  # how long the in-flight requests may run on after the last one starts
 REQUEST_TIMEOUT_S = 10.0
@@ -164,9 +171,12 @@ def _read_body(root: Path, name: str) -> bytes:
     path = (root / relative).resolve()
     if not path.is_relative_to(root.resolve()) or not path.is_file():
         raise Refused(f"body_file {name!r} isn't a file inside {root}")
-    if path.stat().st_size > MAX_BODY_BYTES:
-        raise Refused(f"body_file {name!r} is larger than {MAX_BODY_BYTES} bytes")
-    return path.read_bytes()
+    try:
+        if path.stat().st_size > MAX_BODY_BYTES:
+            raise Refused(f"body_file {name!r} is larger than {MAX_BODY_BYTES} bytes")
+        return path.read_bytes()
+    except OSError as error:
+        raise Refused(f"body_file {name!r} can't be read ({type(error).__name__})") from error
 
 
 _COOKIE_NAME = re.compile(r"[A-Za-z0-9_.!#$%&'*+^`|~-]+")
@@ -241,6 +251,8 @@ def build_plan(config: Path, run_dir: Path, state_file: Path | None, caps: Caps 
     if state_file is not None:
         host, _ = _host_port(urlsplit(site_url).netloc)
         plan.cookie = _cookie_header(state_file, host) or None
+        if plan.cookie is None:  # asked to sign in: never run signed out instead
+            raise Refused(f"{state_file} holds no cookie for {host}, the site's host")
     return plan
 
 
@@ -284,6 +296,17 @@ class Outcome:
     key: str
     status: int | None  # None: no response (a connection failure)
     ms: float
+    error: str | None = None  # the connection failure's exception type name
+
+    @property
+    def failed(self) -> bool:
+        """A connection failure, or a proxy's answer for a backend that has died."""
+        return self.status is None or self.status in GATEWAY_STATUSES
+
+    @property
+    def kind(self) -> str:
+        """What the failure was, for `stop_reason`: the exception type, or the status."""
+        return self.error or str(self.status)
 
 
 class _Live:
@@ -363,6 +386,7 @@ def _send(
             parts.hostname or "", parts.port, timeout=REQUEST_TIMEOUT_S
         )
     sock: socket.socket | None = None
+    error: str | None = None
     try:
         tls = (context or ssl.create_default_context()) if parts.scheme == "https" else None
         sock = _connect(parts.hostname or "", parts.port, tls, live)
@@ -371,13 +395,13 @@ def _send(
         response = connection.getresponse()
         response.read()
         status: int | None = response.status
-    except (OSError, ValueError, http.client.HTTPException):  # ValueError: a bad header
-        status = None
+    except (OSError, ValueError, http.client.HTTPException) as failure:  # ValueError: a bad header
+        status, error = None, type(failure).__name__
     finally:
         if live is not None and sock is not None:
             live.discard(sock)
         connection.close()
-    return Outcome(target.key, status, (time.monotonic() - begin) * 1000.0)
+    return Outcome(target.key, status, (time.monotonic() - begin) * 1000.0, error)
 
 
 def _percentile(values: list[float], fraction: float) -> float:
@@ -395,6 +419,7 @@ def _row(outcomes: list[Outcome]) -> dict[str, Any]:
         "count": len(outcomes),
         "errors": sum(1 for o in outcomes if o.status is None),
         "status": dict(sorted(Counter(str(o.status) for o in outcomes if o.status).items())),
+        "error_types": dict(sorted(Counter(o.error for o in outcomes if o.error).items())),
         "p50_ms": _percentile(times, 0.50),
         "p95_ms": _percentile(times, 0.95),
     }
@@ -410,17 +435,21 @@ async def run_load(plan: Plan, seed: int) -> dict[str, Any]:
     stop = asyncio.Event()
     outcomes: list[Outcome] = []
     live = _Live()
-    streak = 0
+    streak: list[Outcome] = []  # the failures since the last success
+    stopped_by: list[Outcome] = []
 
     async def one(target: Target) -> None:
-        nonlocal streak
         try:
             outcome = await asyncio.to_thread(_send, target, plan, context, live)
         finally:
             slots.release()
         outcomes.append(outcome)
-        streak = streak + 1 if outcome.status is None else 0
-        if streak >= STOP_AFTER_FAILURES:
+        if not outcome.failed:
+            streak.clear()
+            return
+        streak.append(outcome)
+        if len(streak) >= STOP_AFTER_FAILURES and not stop.is_set():
+            stopped_by.extend(streak)
             stop.set()
 
     began = time.monotonic()
@@ -465,12 +494,17 @@ async def run_load(plan: Plan, seed: int) -> dict[str, Any]:
         "cancelled": cancelled,
         "elapsed_s": round(elapsed, 2),
         "stopped_early": stop.is_set(),
-        "stop_reason": (
-            f"{STOP_AFTER_FAILURES} connection failures in a row: the instance stopped responding"
-            if stop.is_set()
-            else None
-        ),
+        "stop_reason": _stop_reason(stopped_by) if stop.is_set() else None,
     }
+
+
+def _stop_reason(streak: list[Outcome]) -> str:
+    """Why the run stopped early, naming each kind of failure in the streak and its count."""
+    kinds = ", ".join(f"{kind} x{n}" for kind, n in sorted(Counter(o.kind for o in streak).items()))
+    return (
+        f"{len(streak)} failures in a row ({kinds}): the instance stopped responding, "
+        "or every request fails the same way"
+    )
 
 
 async def _drain(
@@ -489,7 +523,7 @@ async def _drain(
         task.cancel()
     await asyncio.gather(*pending, return_exceptions=True)
     ms = (time.monotonic() - began) * 1000.0
-    outcomes.extend(Outcome(tasks[task].key, None, ms) for task in pending)
+    outcomes.extend(Outcome(tasks[task].key, None, ms, "DrainTimeout") for task in pending)
     return len(pending)
 
 

@@ -357,12 +357,19 @@ def test_the_session_cookie_is_sent_and_never_printed_or_written(
     assert json.loads(result.stdout)["session"] == "cookie from --state"
 
 
-def test_a_cookie_for_another_domain_is_not_sent(tmp_path: Path, site: Site) -> None:
+def test_a_state_file_with_no_cookie_for_the_site_is_refused(tmp_path: Path, site: Site) -> None:
+    # --state asks for a signed-in run: one with no cookie for the site would silently run
+    # signed out, so it's refused before anything is sent.
     config, run = make_run(tmp_path, site.url)
     state = state_file(tmp_path, domain="example.com")
-    assert cli("--config", config, "--run-dir", run, "--state", state).returncode == 0
-    assert all(r["cookie"] is None for r in site.requests)
-    assert json.loads((run / "load" / "summary.json").read_text())["session"] == "none"
+    result = cli("--config", config, "--run-dir", run, "--state", state)
+    assert result.returncode == 64 and "no cookie for 127.0.0.1" in result.stderr
+    assert "OTHERSITE" not in result.stdout + result.stderr
+    assert site.requests == [] and not (run / "load").exists()
+    empty = tmp_path / "empty.json"
+    empty.write_text(json.dumps({"cookies": []}))
+    assert cli("--config", config, "--run-dir", run, "--state", empty).returncode == 64
+    assert site.requests == []
 
 
 def test_an_unreadable_state_file_is_refused_without_naming_a_value(
@@ -552,6 +559,67 @@ def test_it_stops_early_after_consecutive_connection_failures(tmp_path: Path) ->
     assert (run / "load" / "summary.json").is_file()
 
 
+def test_it_counts_each_failure_by_its_exception_type(tmp_path: Path) -> None:
+    dead = Site()
+    dead.stop()
+    config, run = make_run(
+        tmp_path, dead.url, load=LOAD.replace("concurrency = 4", "concurrency = 1")
+    )
+    summary = json.loads(cli("--config", config, "--run-dir", run).stdout)
+    assert summary["total"]["error_types"] == {"ConnectionRefusedError": 5}
+    assert "ConnectionRefusedError" in summary["stop_reason"]
+
+
+@pytest.mark.parametrize("code", [502, 503, 504])
+def test_a_proxy_answering_a_gateway_error_stops_the_run_early(tmp_path: Path, code: int) -> None:
+    # Behind Caddy a dead backend answers 502, 503, or 504, never a connection failure.
+    gateway = Site(status={"/health": code, "/parse": code})
+    try:
+        config, run = make_run(
+            tmp_path, gateway.url, load=LOAD.replace("concurrency = 4", "concurrency = 1")
+        )
+        result = cli("--config", config, "--run-dir", run)
+    finally:
+        gateway.stop()
+    assert result.returncode == 3
+    summary = json.loads(result.stdout)
+    assert summary["stopped_early"] is True
+    assert str(code) in summary["stop_reason"] and "stopped responding" in summary["stop_reason"]
+    assert summary["total"]["count"] == loadgen.STOP_AFTER_FAILURES
+    assert summary["total"]["status"] == {str(code): loadgen.STOP_AFTER_FAILURES}
+
+
+def test_a_success_between_gateway_errors_resets_the_streak(tmp_path: Path) -> None:
+    flaky = Site(status={"/parse": 502})  # /health answers 200
+    try:
+        config, run = make_run(
+            tmp_path, flaky.url, load=LOAD.replace("concurrency = 4", "concurrency = 1")
+        )
+        result = cli("--config", config, "--run-dir", run, "--seed", "3")
+    finally:
+        flaky.stop()
+    summary = json.loads(result.stdout)
+    marks = "".join("x" if r["path"] == "/parse" else "." for r in flaky.requests)
+    longest = max(len(streak) for streak in marks.split("."))
+    assert "." in marks  # the seed mixes in a success
+    assert (summary["stopped_early"] is True) == (longest >= loadgen.STOP_AFTER_FAILURES)
+
+
+def test_a_body_file_that_cant_be_read_is_refused(
+    tmp_path: Path, site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, run = make_run(tmp_path, site.url)
+
+    def unreadable(self: Path) -> bytes:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "read_bytes", unreadable)
+    with pytest.raises(loadgen.Refused, match="body.json"):
+        loadgen.build_plan(config, run, None)
+    assert loadgen.main(["--config", str(config), "--run-dir", str(run)]) == 64
+    assert site.requests == []
+
+
 def test_the_early_stop_threshold_is_five_connection_failures_in_a_row() -> None:
     assert loadgen.STOP_AFTER_FAILURES == 5
 
@@ -604,6 +672,8 @@ def test_https_verifies_against_the_runs_ca_file_and_fails_without_it(tmp_path: 
         server.server_close()
     assert result.returncode == 3  # the system trust store doesn't know the authority
     assert len(seen) == 20  # and no request got through
+    types = json.loads(result.stdout)["total"]["error_types"]
+    assert set(types) == {"SSLCertVerificationError"}  # named, not "stopped responding" alone
 
 
 # -- the file itself --------------------------------------------------------------------------

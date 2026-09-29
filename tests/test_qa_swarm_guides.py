@@ -335,11 +335,13 @@ def test_security_guide_covers_the_checklist_with_commands() -> None:
 
 def test_security_guide_builds_a_cookie_jar_without_printing_the_cookie() -> None:
     body = text("security.md")
-    assert "prints nothing" in body and "chmod 600 singer.jar" in body
+    assert "prints nothing" in body and "chmod" not in body
+    assert "python3 jar.py <state file> singer.jar <site origin>\n" in body
     assert "`Secure` only for an `https://` origin" in body
     script = re.search(r"```python\n(.*?)```", body, re.DOTALL)
     assert script and "print(" not in script.group(1)
     assert 'json.load(handle)["cookies"]' in script.group(1)
+    assert "os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600" in script.group(1)
 
 
 def test_security_guide_runs_the_script_it_ships(tmp_path: Path) -> None:
@@ -373,6 +375,7 @@ def test_security_guide_runs_the_script_it_ships(tmp_path: Path) -> None:
             check=True,
         )
         assert done.stdout == "" and done.stderr == ""
+        assert jar.stat().st_mode & 0o777 == 0o600
         rows = jar.read_text().splitlines()
         assert rows[0] == "# Netscape HTTP Cookie File"
         assert rows[1] == f"#HttpOnly_127.0.0.1\tFALSE\t/\t{flag}\t0\ts2s_session\tCOOKIEVALUE"
@@ -431,3 +434,201 @@ def test_security_guide_names_the_photo_read_and_leaves_loadgen_to_the_orchestra
     ):
         assert needle in body, needle
     assert "`loadgen.py` can send the burst" not in body
+
+
+# -- the security guide's token scripts and probes (slice 3 branch-gate fixes) ----------------
+
+TOKEN = "AbCdEfGhIjKlMnOpQrStUv"  # a share token's shape: 22 URL-safe characters
+TOKEN_SHAPE = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])")
+
+
+def security_script(name: str) -> str:
+    """The Python block that follows "Save this script as `<name>`" in security.md."""
+    body = text("security.md")
+    at = body.index(f"Save this script as `{name}`")
+    block = re.search(r"```python\n(.*?)\n\s*```", body[at:], re.DOTALL)
+    assert block, name
+    lines = block.group(1).splitlines()
+    indent = min(len(line) - len(line.lstrip()) for line in lines if line.strip())
+    return "\n".join(line[indent:] for line in lines) + "\n"
+
+
+def run_script(tmp_path: Path, name: str, *args: str) -> subprocess.CompletedProcess[str]:
+    script = tmp_path / name
+    script.write_text(security_script(name), encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, str(script), *args], capture_output=True, text=True, cwd=tmp_path
+    )
+
+
+def test_share_py_writes_private_curl_configs_and_prints_nothing(tmp_path: Path) -> None:
+    identities = tmp_path / "identities.json"
+    identities.write_text(json.dumps({"share": {"workspace": "w", "url": f"/s/{TOKEN}"}}))
+    done = run_script(tmp_path, "share.py", str(identities), "https://127.0.0.1:5173", "seeded")
+    assert done.returncode == 0 and done.stdout == "" and done.stderr == ""
+    urls = {}
+    for suffix in ("", "-altered", "-made-up"):
+        cfg = tmp_path / f"seeded{suffix}.cfg"
+        assert cfg.stat().st_mode & 0o777 == 0o600
+        match = re.fullmatch(r'url = "https://127\.0\.0\.1:5173/s/([^"]+)"\n', cfg.read_text())
+        assert match, suffix
+        urls[suffix] = match.group(1)
+    assert urls[""] == TOKEN
+    assert urls["-altered"][:-1] == TOKEN[:-1] and urls["-altered"] != TOKEN
+    assert len(urls["-made-up"]) == len(TOKEN) and urls["-made-up"] != TOKEN
+    assert all(re.fullmatch(r"[A-Za-z0-9_-]{22}", value) for value in urls.values())
+    published = tmp_path / "publish.json"
+    published.write_text(json.dumps({"share_id": "s1", "url": f"/s/{TOKEN}"}))
+    done = run_script(tmp_path, "share.py", str(published), "http://127.0.0.1:1", "mine")
+    assert done.returncode == 0 and done.stdout == ""
+    assert (tmp_path / "mine.cfg").read_text() == f'url = "http://127.0.0.1:1/s/{TOKEN}"\n'
+
+
+def _mail(outbox: Path, name: str, to: str, token: str) -> None:
+    from email.message import EmailMessage
+    from urllib.parse import urlencode
+
+    message = EmailMessage()
+    message["From"] = "staff2solfa <noreply@localhost>"
+    message["To"] = to
+    message["Subject"] = "Your sign-in link"
+    link = "https://127.0.0.1:5173/sign-in?" + urlencode({"token": token, "email": to})
+    message.set_content(f"Use this link to sign in to QA A on staff2solfa:\n\n{link}\n\nBye.\n")
+    (outbox / name).write_bytes(bytes(message))
+
+
+def test_consume_py_reads_the_newest_mail_to_the_address(tmp_path: Path) -> None:
+    outbox = tmp_path / "outbox"
+    outbox.mkdir()
+    _mail(outbox, "20260929T100000000000Z-000001.eml", "singer-b@choir.test", "old-token")
+    _mail(outbox, "20260929T100001000000Z-000002.eml", "singer-b@choir.test", "new-token")
+    _mail(outbox, "20260929T100002000000Z-000003.eml", "other@choir.test", "other-token")
+    done = run_script(tmp_path, "consume.py", str(outbox), "singer-b@choir.test")
+    assert done.returncode == 0 and done.stdout == "" and done.stderr == ""
+    body = tmp_path / "consume.json"
+    assert body.stat().st_mode & 0o777 == 0o600
+    assert json.loads(body.read_text()) == {"token": "new-token", "email": "singer-b@choir.test"}
+    body.unlink()
+    missing = run_script(tmp_path, "consume.py", str(outbox), "nobody@choir.test")
+    assert missing.returncode == 1 and missing.stdout == "" and not body.exists()
+
+
+def test_png_py_writes_a_valid_one_pixel_png(tmp_path: Path) -> None:
+    import struct
+    import zlib
+
+    done = run_script(tmp_path, "png.py")
+    assert done.returncode == 0 and done.stdout == ""
+    data = (tmp_path / "one.png").read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    at, chunks = 8, []
+    while at < len(data):
+        (length,) = struct.unpack(">I", data[at : at + 4])
+        kind, payload = data[at + 4 : at + 8], data[at + 8 : at + 8 + length]
+        (crc,) = struct.unpack(">I", data[at + 8 + length : at + 12 + length])
+        assert crc == zlib.crc32(kind + payload), kind
+        chunks.append((kind, payload))
+        at += 12 + length
+    assert [kind for kind, _ in chunks] == [b"IHDR", b"IDAT", b"IEND"]
+    assert struct.unpack(">IIBBBBB", chunks[0][1]) == (1, 1, 8, 2, 0, 0, 0)
+    assert zlib.decompress(chunks[1][1]) == b"\x00\xff\xff\xff"
+    script = security_script("png.py")
+    assert set(re.findall(r"^import (\w+)", script, re.MULTILINE)) == {"struct", "zlib"}
+
+
+def test_the_cost_cap_probe_is_well_formed_and_says_what_a_422_means() -> None:
+    body = text("security.md")
+    section = body.split("## Cost-cap races", 1)[1].split("\n## ", 1)[0]
+    burst = next(line for line in section.splitlines() if "for i in 1 2 3 4 5 6" in line)
+    for needle in ("-F input_type=image", "-F key=C", "-F beats_per_bar=4", "-F files=@one.png"):
+        assert needle in burst, needle
+    assert "file=@one.png" not in section.replace("files=@one.png", "")
+    puts = [line for line in section.splitlines() if "-X PUT" in line]
+    assert puts and all("-H 'Content-Type: application/json'" in line for line in puts)
+    for needle in (
+        "A `402` whose body says \"this month's reading budget has\" what's left means the cap"
+        " held",
+        "A `422` means the probe is malformed: fix the request and send it again, and never"
+        " record it as held.",
+        "At the default unknown-page cost of $1.00 a page, a $1.5 cap lets exactly one job id"
+        " through",
+        "Save this script as `png.py`",
+    ):
+        assert needle in section, needle
+
+
+def test_the_rate_limit_and_upload_steps_name_the_header_the_outbox_and_the_scan_rule() -> None:
+    body = text("security.md")
+    for needle in (
+        "`-H 'Content-Type: application/json'`, and the site's own `Origin` header",
+        "the run's outbox (`outbox` in `instance.json`)",
+        "If fewer than 5 emails arrived, the per-client limit (20 an hour, shared by every tester,"
+        " the session sign-ins, and the restart probe) may be the one you hit; say so.",
+        "Send every size and type probe with `input_type=musicxml`; never send a scan type"
+        " (image or pdf) outside the cost-cap probe.",
+    ):
+        assert needle in body, needle
+
+
+def test_the_charter_section_names_the_outbox_and_the_identities_file() -> None:
+    charter = text("security.md").split("## What the charter gives you", 1)[1].split("\n## ")[0]
+    assert "The run's outbox (`outbox` in `instance.json`)" in charter
+    assert "`<run folder>/env/identities.json`" in charter
+
+
+def _documented_commands() -> list[str]:
+    """Every shell command security.md gives: indented command lines and inline curl/python3."""
+    body = text("security.md")
+    commands = [
+        line.strip()
+        for line in body.splitlines()
+        if re.match(r"\s{4,}(?:curl|python3|for i) ", line)
+    ]
+    commands += re.findall(r"`((?:curl|python3|grep) [^`]+)`", body)
+    return commands
+
+
+def test_the_guard_allows_every_documented_command_and_none_holds_a_secret(
+    tmp_path: Path,
+) -> None:
+    import importlib.util
+
+    hook_path = SKILL.parent.parent / "hooks" / "qa_tester_guard.py"
+    spec = importlib.util.spec_from_file_location("qa_tester_guard_for_guides", hook_path)
+    assert spec is not None and spec.loader is not None
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    run = tmp_path / "qa-20260929T101010-ab12"
+    active = {
+        "run_dir": str(run),
+        "repo_root": str(tmp_path / "repo"),
+        "ports": [5173],
+        "direct_ports": [6543],
+    }
+    values = {
+        "<run folder>": str(run),
+        "<site origin>": "https://127.0.0.1:5173",
+        "<ca_file>": f"{run}/env/caddy/root.crt",
+        "<outbox>": f"{run}/env/data/outbox",
+        "<address>": "singer-b@choir.test",
+        "<state file>": f"{run}/state/singer-b@choir.test.json",
+        "<workspace id>": "ws_0123",
+        "<direct backend port>": "6543",
+    }
+    commands = _documented_commands()
+    names = " ".join(commands)
+    for needle in ("share.py", "consume.py", "-K seeded", "@consume.json", "png.py", "grep -il"):
+        assert needle in names, needle
+    for command in commands:
+        assert "env/private" not in command and ".env" not in command, command
+        assert not TOKEN_SHAPE.search(command), command
+        for placeholder, value in values.items():
+            command = command.replace(placeholder, value)
+        command = f"cd {run}/testers/sec-1 && {command}"
+        payload = {
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+            "cwd": str(run / "testers" / "sec-1"),
+            "agent_type": "security-tester",
+        }
+        assert hook.decide(payload, active) is None, command
