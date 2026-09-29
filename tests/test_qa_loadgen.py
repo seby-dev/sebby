@@ -713,3 +713,52 @@ def test_in_flight_requests_are_cut_off_after_the_drain_timeout(
         assert summary["total"]["errors"] == summary["total"]["count"]
     finally:
         slow.stop()
+
+
+class SilentTls:
+    """A loopback listener that accepts connections and never answers the TLS ClientHello, so a
+    request is stuck in the handshake until its socket is shut."""
+
+    def __init__(self) -> None:
+        import socket
+
+        self.listener = socket.socket()
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen(16)
+        self.url = f"https://127.0.0.1:{self.listener.getsockname()[1]}"
+        self.held: list[socket.socket] = []
+        threading.Thread(target=self._accept, daemon=True).start()
+
+    def _accept(self) -> None:
+        while True:
+            try:
+                conn, _ = self.listener.accept()
+            except OSError:
+                return
+            self.held.append(conn)
+
+    def stop(self) -> None:
+        self.listener.close()
+        for conn in self.held:
+            conn.close()
+
+
+def test_a_request_stuck_in_the_tls_handshake_is_cut_off_after_the_drain_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    silent = SilentTls()
+    try:
+        monkeypatch.setattr(loadgen, "DRAIN_TIMEOUT_S", 0.5)
+        load = LOAD.replace("rate_per_second = 20", "rate_per_second = 4").replace(
+            "concurrency = 4", "concurrency = 1"
+        )
+        config, run = make_run(tmp_path, silent.url, load=load)
+        began = time.monotonic()
+        assert loadgen.main(["--config", str(config), "--run-dir", str(run)]) == 0
+        elapsed = time.monotonic() - began
+        # the documented bound, never the request timeout (10 s) on top of it
+        assert elapsed < 1 + loadgen.DURATION_GRACE_S + 0.5 + 1.5, elapsed
+        summary = json.loads((run / "load" / "summary.json").read_text())
+        assert summary["cancelled"] == summary["total"]["count"] >= 1
+    finally:
+        silent.stop()

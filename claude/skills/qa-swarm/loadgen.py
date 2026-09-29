@@ -25,9 +25,10 @@ It never follows a redirect, sends the session cookie from `--state` without pri
 it, and stops early after `STOP_AFTER_FAILURES` connection failures in a row (safety rule 6: stop
 if the instance stops responding). Once `duration + DURATION_GRACE_S` has passed it starts no
 request, and it waits at most `DRAIN_TIMEOUT_S` more for the ones in flight: any still running
-then is cut off (its socket shut) and counted as an error and in `cancelled`. So a run lasts at
-most `duration + DURATION_GRACE_S + DRAIN_TIMEOUT_S`, plus a moment. It writes
-`<run folder>/load/summary.json` and prints it.
+then is cut off (its socket shut, even mid TLS handshake) and counted as an error and in
+`cancelled`. So a run lasts at most `duration + DURATION_GRACE_S + DRAIN_TIMEOUT_S`, plus a moment
+(a TCP connect to a loopback port that never completes could add up to `REQUEST_TIMEOUT_S`).
+It writes `<run folder>/load/summary.json` and prints it.
 
 Exit codes: 0 finished, 3 stopped early, 64 refused or a usage error (nothing was sent).
 """
@@ -317,6 +318,29 @@ class _Live:
                 pass
 
 
+def _connect(
+    host: str, port: int | None, context: ssl.SSLContext | None, live: _Live | None
+) -> socket.socket:
+    """A connected socket to `host`, registered with `live` before any TLS handshake, so a run
+    past its drain timeout can shut a request stuck in the handshake too. With a `context`, the
+    handshake verifies the certificate against `host`, as `http.client` does."""
+    raw = socket.create_connection((host, port or (443 if context else 80)), REQUEST_TIMEOUT_S)
+    sock: socket.socket = raw
+    try:
+        if context is not None:
+            sock = context.wrap_socket(raw, server_hostname=host, do_handshake_on_connect=False)
+        if live is not None:
+            live.add(sock)
+        if isinstance(sock, ssl.SSLSocket):
+            sock.do_handshake()
+    except BaseException:
+        if live is not None:
+            live.discard(sock)
+        sock.close()
+        raise
+    return sock
+
+
 def _send(
     target: Target, plan: Plan, context: ssl.SSLContext | None, live: _Live | None = None
 ) -> Outcome:
@@ -340,10 +364,9 @@ def _send(
         )
     sock: socket.socket | None = None
     try:
-        connection.connect()
-        sock = connection.sock
-        if live is not None and sock is not None:
-            live.add(sock)
+        tls = (context or ssl.create_default_context()) if parts.scheme == "https" else None
+        sock = _connect(parts.hostname or "", parts.port, tls, live)
+        connection.sock = sock  # connected already: `request` doesn't connect again
         connection.request(target.method, path, body=target.body, headers=headers)
         response = connection.getresponse()
         response.read()
@@ -382,7 +405,7 @@ async def run_load(plan: Plan, seed: int) -> dict[str, Any]:
     rng = random.Random(seed)
     total = plan.rate_per_second * plan.duration_seconds
     picks = rng.choices(range(len(plan.targets)), weights=[t.weight for t in plan.targets], k=total)
-    context = ssl.create_default_context(cafile=plan.ca_file) if plan.ca_file else None
+    context = ssl.create_default_context(cafile=plan.ca_file)  # the system's roots without one
     slots = asyncio.Semaphore(plan.concurrency)
     stop = asyncio.Event()
     outcomes: list[Outcome] = []
