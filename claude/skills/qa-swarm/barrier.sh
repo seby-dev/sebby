@@ -5,7 +5,8 @@
 #   barrier.sh spread <dir>
 #
 # `wait` writes ready-<name> into <dir>, then blocks until <count> different names have
-# arrived. Exactly one waiter decides the outcome, through `mkdir go.lock`, and writes either
+# arrived. Exactly one waiter decides the outcome, through `ln -s <name> go.lock`, a symlink
+# that is the lock and names its owner in one atomic step, and writes either
 # `go` (released) or `abandoned` (a timeout). Every waiter then returns: 0 if released, 75 if
 # abandoned. The caller chains its action after `wait` with `&&`, so every participant acts
 # within one poll (about 50 ms) of the last arrival. `spread` prints one JSON line with the
@@ -17,14 +18,21 @@
 # A waiter that a signal (TERM, INT, or HUP) stops, such as a tool timeout, abandons the
 # barrier and exits 75: it takes `go.lock` and writes `abandoned` (reason=signal), or, if it
 # already holds the lock with no outcome written (it was deciding), it writes `abandoned`
-# then. If another participant holds the lock, it leaves the outcome to that one. A waiter
-# whose parent is gone (the shell that would run the `&&` action was killed) does the same
-# (reason=orphaned), on its next poll and again just before it writes `acted-<name>`, so an
-# orphan never reports an action nobody took. If the decider itself stalls after
-# `mkdir go.lock`, no `go` or `abandoned` file appears: every waiter times out with 75, and
-# `spread` reports the outcome as `pending`. SIGKILL can't be trapped: a participant killed
-# that way writes no `acted-` file, which `spread` shows as `released_count` exceeding the
-# number of `acted` entries.
+# then. The lock's owner is read back from the symlink, not taken from `ln`'s exit status, so
+# a signal to the whole process group that kills `ln` after it made the link still leaves a
+# lock its taker recognizes. If another participant holds the lock, it leaves the outcome to
+# that one. If the outcome is `go`, a stopped waiter also removes its own `acted-<name>`,
+# since its action never ran. A waiter whose parent is gone (the shell that would run the
+# `&&` action was killed) does the same (reason=orphaned), on its next poll and again just
+# before it writes `acted-<name>`; that last check also compares its parent pid, to catch a
+# reused pid. A `kill -0` that fails with EPERM (a live parent of another user) isn't taken
+# as a gone parent. This narrows, but can't close, the gap between exiting 0 and the action
+# running: a waiter stopped after it exits 0 can't be told apart from one that acted. If the
+# decider itself stalls holding `go.lock`, no `go` or `abandoned` file appears: every waiter
+# times out with 75, and `spread` reports the outcome as `pending`. SIGKILL can't be trapped:
+# a participant killed that way writes no `acted-` file, which `spread` shows as
+# `released_count` exceeding the number of `acted` entries. An older version's lock, a
+# `go.lock` directory with an `owner` file, is still honored as a lock.
 #
 # The outcome file and `spread` are authoritative, not one participant's exit code: a waiter
 # that times out and loses the lock waits a grace period for the decider's file, and if the
@@ -115,45 +123,63 @@ count_ready() {
   done
 }
 
-# Tries to become the barrier's one decider. Exactly one mkdir succeeds. A signal that
-# arrives while mkdir runs is held until the owner file is written, so a stopped decider
-# always leaves a lock it can recognize as its own (see stop_waiter).
-claim() {
-  local won=1
-  SIG_HELD=""
-  trap 'SIG_HELD=1' TERM INT HUP
-  if mkdir "$DIR/go.lock" 2>/dev/null; then
-    printf '%s\n' "$NAME" >"$DIR/go.lock/owner"
-    won=0
+# take_lock: tries to create go.lock, a symlink to this waiter's name. Exactly one `ln -s`
+# succeeds, and the link and its owner appear together. `-n` keeps ln from following an
+# existing link. ln's exit status is ignored: whether this waiter won is read back by
+# lock_owner, so an ln killed after it made the link still counts.
+take_lock() {
+  [ -e "$DIR/go.lock" ] || [ -L "$DIR/go.lock" ] || ln -sn "$NAME" "$DIR/go.lock" 2>/dev/null
+  # An older version's go.lock directory, made in the moment before ln ran, gets the link
+  # inside it instead: remove that stray, since the directory is the lock.
+  if [ -d "$DIR/go.lock" ] && [ ! -L "$DIR/go.lock" ] && [ -L "$DIR/go.lock/$NAME" ]; then
+    rm -f "$DIR/go.lock/$NAME"
   fi
-  trap on_signal TERM INT HUP
-  [ -z "$SIG_HELD" ] || on_signal
-  return $won
+}
+
+# Sets OWNER to go.lock's owner: the symlink's target, or an older directory lock's owner
+# file. Empty when there's no lock or its owner can't be read.
+lock_owner() {
+  OWNER=""
+  if [ -L "$DIR/go.lock" ]; then
+    OWNER="$(readlink "$DIR/go.lock" 2>/dev/null)"
+  elif [ -d "$DIR/go.lock" ]; then
+    IFS= read -r OWNER 2>/dev/null <"$DIR/go.lock/owner"
+  fi
+}
+
+# Tries to become the barrier's one decider: 0 if this waiter holds go.lock.
+claim() {
+  take_lock
+  lock_owner
+  [ "$OWNER" = "$NAME" ]
 }
 
 on_signal() {
   stop_waiter signal
 }
 
-# Exits 75 if the parent that would run the `&&` action is gone.
+# Exits 75 if the parent that would run the `&&` action is gone. `kill -0` also fails with
+# EPERM for a live process of another user, so a failure is checked once more with ps.
 check_parent() {
-  kill -0 "$PARENT" 2>/dev/null || stop_waiter orphaned
+  kill -0 "$PARENT" 2>/dev/null && return 0
+  ps -p "$PARENT" >/dev/null 2>&1 && return 0
+  stop_waiter orphaned
 }
 
 # stop_waiter <reason>: abandons the barrier and exits 75. It writes `abandoned` if it wins
 # go.lock, or if it already holds the lock and no outcome is written yet (it was deciding).
 # A lock held by another participant is left to that one.
+# If the outcome is `go`, it removes its own acted- file (and any temp file for it): a waiter
+# stopped while it wrote that file never returned 0, so its action never ran.
 stop_waiter() {
-  local owner=""
   trap '' TERM INT HUP
-  if mkdir "$DIR/go.lock" 2>/dev/null; then
-    printf '%s\n' "$NAME" >"$DIR/go.lock/owner"
+  take_lock
+  lock_owner
+  if [ "$OWNER" = "$NAME" ] && [ ! -e "$DIR/go" ] && [ ! -e "$DIR/abandoned" ]; then
     write_abandoned "$1"
-  else
-    IFS= read -r owner 2>/dev/null <"$DIR/go.lock/owner"
-    if [ "$owner" = "$NAME" ] && [ ! -e "$DIR/go" ] && [ ! -e "$DIR/abandoned" ]; then
-      write_abandoned "$1"
-    fi
+  fi
+  if [ -e "$DIR/go" ]; then
+    rm -f "$DIR/acted-$NAME" "$DIR/.acted-$NAME.tmp.$$"
   fi
   printf 'barrier.sh: abandoned (%s): stopped (%s)\n' "$DIR" "$1" >&2
   exit 75
@@ -165,7 +191,13 @@ write_abandoned() {
 }
 
 release() {
+  local ppid
   check_parent
+  # The parent pid may have been reused since this waiter started: compare the real one. An
+  # empty answer (no ps) leaves the kill -0 check above as the only one.
+  ppid="$(ps -o ppid= -p $$ 2>/dev/null)"
+  ppid="${ppid//[!0-9]/}"
+  [ -z "$ppid" ] || [ "$ppid" = "$PARENT" ] || stop_waiter orphaned
   now_ms
   write_atomic "$DIR/acted-$NAME" "$NOW_MS" || fail_io
   trap - TERM INT HUP
