@@ -388,6 +388,10 @@ def test_an_unreadable_state_file_is_refused_without_naming_a_value(
         "http://user@127.0.0.1:1/x",
         "ftp://127.0.0.1/x",
         "health",  # neither relative to the site nor a URL
+        "http://127.0.0.1:99999/x",  # a port out of range
+        "http://127.0.0.1:5173:80/x",  # two ports
+        "http://127.0.0.1:+5173/x",  # a signed port
+        "http://[::1/x",  # an unclosed IPv6 bracket
     ],
 )
 def test_a_target_outside_the_allowlist_is_refused_before_any_request(
@@ -618,3 +622,94 @@ def test_it_imports_only_the_standard_library() -> None:
 
 def test_the_caps_are_the_documented_ones() -> None:
     assert loadgen.CAPS == loadgen.Caps(8, 20, 300)
+
+
+def test_an_absolute_url_with_another_scheme_than_the_site_is_refused(
+    tmp_path: Path, site: Site
+) -> None:
+    https = site.url.replace("http://", "https://")
+    load = LOAD.replace('path = "/health"', f'path = "{https}/x"')
+    config, run = make_run(tmp_path, site.url, load=load)
+    result = cli("--config", config, "--run-dir", run)
+    assert result.returncode == 64 and "scheme" in result.stderr
+    assert site.requests == []
+
+
+def test_a_relative_path_whose_query_holds_a_url_stays_relative(tmp_path: Path, site: Site) -> None:
+    load = LOAD.replace('path = "/health"', 'path = "/r?to=http://example.com/x"')
+    config, run = make_run(tmp_path, site.url, load=load)
+    plan = loadgen.build_plan(config, run, None)
+    assert plan.targets[0].url == f"{site.url}/r?to=http://example.com/x"
+
+
+def test_a_usage_error_exits_64_with_the_usage_on_stderr() -> None:
+    result = cli("--run-dir", "x")  # --config is missing
+    assert result.returncode == 64
+    assert "usage:" in result.stderr and "--config" in result.stderr
+    assert cli("--config", "a", "--run-dir", "b", "--seed", "x").returncode == 64
+
+
+def test_the_plans_repr_never_shows_the_cookie(tmp_path: Path, site: Site) -> None:
+    config, run = make_run(tmp_path, site.url)
+    plan = loadgen.build_plan(config, run, state_file(tmp_path))
+    assert plan.cookie and COOKIE in plan.cookie
+    assert COOKIE not in repr(plan) and COOKIE not in str(plan)
+
+
+class Trickle:
+    """A loopback server that sends its headers, then one body byte every 0.1 s until stopped,
+    so no single read ever times out."""
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        done = self.done
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                self.send_response(200)
+                self.send_header("Content-Length", "100000")
+                self.end_headers()
+                try:
+                    while not done.wait(0.1):
+                        self.wfile.write(b"x")
+                        self.wfile.flush()
+                except OSError:
+                    pass
+
+            do_POST = do_GET  # noqa: N815
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def stop(self) -> None:
+        self.done.set()
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def test_in_flight_requests_are_cut_off_after_the_drain_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    slow = Trickle()
+    try:
+        monkeypatch.setattr(loadgen, "DRAIN_TIMEOUT_S", 0.5)
+        # One slot: the first request holds it, so the loop's wait for a slot is bounded too.
+        load = LOAD.replace("rate_per_second = 20", "rate_per_second = 4").replace(
+            "concurrency = 4", "concurrency = 1"
+        )
+        config, run = make_run(tmp_path, slow.url, load=load)
+        began = time.monotonic()
+        assert loadgen.main(["--config", str(config), "--run-dir", str(run)]) == 0
+        elapsed = time.monotonic() - began
+        # duration 1 s, grace, the drain timeout, and slack; never the trickle's pace
+        assert elapsed < 1 + loadgen.DURATION_GRACE_S + 0.5 + 1.5, elapsed
+        summary = json.loads((run / "load" / "summary.json").read_text())
+        assert summary["cancelled"] == summary["total"]["count"] >= 1
+        assert summary["total"]["errors"] == summary["total"]["count"]
+    finally:
+        slow.stop()

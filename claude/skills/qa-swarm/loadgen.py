@@ -12,17 +12,22 @@ It refuses, before it sends anything and with exit code 64, when:
 
 - `schema_version` isn't 1, `[load] enabled` isn't true, or the mix is empty or malformed;
 - a request's method isn't GET, HEAD, or POST;
-- a target URL's host and port aren't in the run's `allowed_hosts` (`env/instance.json`), or the
-  host isn't a loopback address. A `path` is relative to `site_url`; an absolute URL is checked the
-  same way. The raw backend port isn't in `allowed_hosts`, and the sound hosts are for browser
-  traffic only, so neither is ever a target;
+- a target URL's host and port aren't in the run's `allowed_hosts` (`env/instance.json`), the
+  host isn't a loopback address, or the port can't be read. A `path` is relative to `site_url`
+  unless it starts with a scheme and `://`; an absolute URL is checked the same way and must use
+  `site_url`'s scheme. The raw backend port isn't in `allowed_hosts`, and the sound hosts are for
+  browser traffic only, so neither is ever a target;
 - a `body_file` is absolute or outside the repository (the parent of the `.claude/` folder);
 - `instance.json` names a `ca_file` that doesn't exist, or a `--state` cookie can't be sent
   as a header.
 
 It never follows a redirect, sends the session cookie from `--state` without printing or logging
 it, and stops early after `STOP_AFTER_FAILURES` connection failures in a row (safety rule 6: stop
-if the instance stops responding). It writes `<run folder>/load/summary.json` and prints it.
+if the instance stops responding). Once `duration + DURATION_GRACE_S` has passed it starts no
+request, and it waits at most `DRAIN_TIMEOUT_S` more for the ones in flight: any still running
+then is cut off (its socket shut) and counted as an error and in `cancelled`. So a run lasts at
+most `duration + DURATION_GRACE_S + DRAIN_TIMEOUT_S`, plus a moment. It writes
+`<run folder>/load/summary.json` and prints it.
 
 Exit codes: 0 finished, 3 stopped early, 64 refused or a usage error (nothing was sent).
 """
@@ -36,14 +41,16 @@ import json
 import math
 import random
 import re
+import socket
 import ssl
 import sys
+import threading
 import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 from urllib.parse import urlsplit
 
 try:
@@ -56,6 +63,7 @@ METHODS = ("GET", "HEAD", "POST")
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 STOP_AFTER_FAILURES = 5
 DURATION_GRACE_S = 1.0
+DRAIN_TIMEOUT_S = 10.0  # how long the in-flight requests may run on after the last one starts
 REQUEST_TIMEOUT_S = 10.0
 MAX_BODY_BYTES = 1024 * 1024
 EXIT_STOPPED_EARLY = 3
@@ -92,11 +100,11 @@ class Target:
 class Plan:
     site_url: str
     ca_file: str | None
-    cookie: str | None
     targets: list[Target]
     concurrency: int
     rate_per_second: int
     duration_seconds: int
+    cookie: str | None = field(default=None, repr=False)  # never in a repr, a log, or a trace
     clamped: list[str] = field(default_factory=list)
 
 
@@ -109,15 +117,21 @@ def _int(section: dict[str, Any], key: str, default: int) -> int:
 
 def _host_port(netloc: str) -> tuple[str, str]:
     """(host, host:port) of a URL's network location, lowercased, with no user info."""
-    parts = urlsplit(f"//{netloc}")
-    host = (parts.hostname or "").lower()
-    return host, f"{host}:{parts.port}" if parts.port else host
+    try:
+        parts = urlsplit(f"//{netloc}")
+        host, port = (parts.hostname or "").lower(), parts.port
+    except ValueError as error:  # a port out of range or not a number, or a bad IPv6 bracket
+        raise Refused(f"{netloc} doesn't have a host and port that can be read") from error
+    return host, f"{host}:{port}" if port else host
 
 
 def check_target(url: str, allowed_hosts: set[str]) -> None:
     """Raises Refused unless `url` is http(s) to a loopback host and a `host:port` in the
     allowlist. This is the only place a target is approved."""
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError as error:
+        raise Refused(f"{url} isn't a URL that can be read") from error
     if parts.scheme not in ("http", "https") or not parts.netloc or "@" in parts.netloc:
         raise Refused(f"{url} isn't an http or https URL for a host and port")
     host, host_port = _host_port(parts.netloc)
@@ -127,10 +141,16 @@ def check_target(url: str, allowed_hosts: set[str]) -> None:
         raise Refused(f"{host_port} isn't in this run's allowed_hosts")
 
 
+_ABSOLUTE = re.compile(r"[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+
+
 def _target_url(site_url: str, path: str) -> str:
-    """`path` against the site, or `path` itself when it's an absolute URL."""
-    if "://" in path or path.startswith("//"):
-        return path if "://" in path else f"{urlsplit(site_url).scheme}:{path}"
+    """`path` against the site, or `path` itself when it's an absolute URL (a scheme, then
+    `://`, at the start: a `://` later on, in a query, say, leaves it relative)."""
+    if _ABSOLUTE.match(path):
+        return path
+    if path.startswith("//"):
+        return f"{urlsplit(site_url).scheme}:{path}"
     if not path.startswith("/"):
         raise Refused(f"path {path!r} must start with / (relative to the site) or be a full URL")
     return site_url + path
@@ -204,7 +224,6 @@ def build_plan(config: Path, run_dir: Path, state_file: Path | None, caps: Caps 
     plan = Plan(
         site_url=site_url,
         ca_file=ca_file,
-        cookie=None,
         targets=targets,
         concurrency=_int(load, "concurrency", 4),
         rate_per_second=_int(load, "rate_per_second", 10),
@@ -239,6 +258,8 @@ def _target(entry: object, index: int, site_url: str, allowed: set[str], root: P
         raise Refused(f"{where} weight must be a positive integer")
     url = _target_url(site_url, path)
     check_target(url, allowed)
+    if urlsplit(url).scheme != urlsplit(site_url).scheme:
+        raise Refused(f"{where} {url} must use the site's scheme, {urlsplit(site_url).scheme}")
     body_name = entry.get("body_file")
     body = _read_body(root, body_name) if isinstance(body_name, str) else None
     content_type = entry.get("content_type")
@@ -264,7 +285,41 @@ class Outcome:
     ms: float
 
 
-def _send(target: Target, plan: Plan, context: ssl.SSLContext | None) -> Outcome:
+class _Live:
+    """The sockets in flight, so a run past its drain timeout can shut them. (The socket itself,
+    not the connection: `http.client` hands it to the response and drops it from the connection.)
+    A request adds its socket, then checks `aborted`; `abort` sets `aborted`, then reads the set,
+    so no socket slips past both."""
+
+    def __init__(self) -> None:
+        self.sockets: set[socket.socket] = set()
+        self.aborted = threading.Event()
+        self.lock = threading.Lock()
+
+    def add(self, sock: socket.socket) -> None:
+        with self.lock:
+            self.sockets.add(sock)
+        if self.aborted.is_set():
+            raise OSError("the run's drain timeout passed")
+
+    def discard(self, sock: socket.socket) -> None:
+        with self.lock:
+            self.sockets.discard(sock)
+
+    def abort(self) -> None:
+        self.aborted.set()
+        with self.lock:
+            sockets = list(self.sockets)
+        for sock in sockets:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)  # wakes a blocked read, which then fails
+            except OSError:
+                pass
+
+
+def _send(
+    target: Target, plan: Plan, context: ssl.SSLContext | None, live: _Live | None = None
+) -> Outcome:
     """One request on its own connection, with no redirect followed."""
     parts = urlsplit(target.url)
     path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
@@ -283,7 +338,12 @@ def _send(target: Target, plan: Plan, context: ssl.SSLContext | None) -> Outcome
         connection = http.client.HTTPConnection(
             parts.hostname or "", parts.port, timeout=REQUEST_TIMEOUT_S
         )
+    sock: socket.socket | None = None
     try:
+        connection.connect()
+        sock = connection.sock
+        if live is not None and sock is not None:
+            live.add(sock)
         connection.request(target.method, path, body=target.body, headers=headers)
         response = connection.getresponse()
         response.read()
@@ -291,6 +351,8 @@ def _send(target: Target, plan: Plan, context: ssl.SSLContext | None) -> Outcome
     except (OSError, ValueError, http.client.HTTPException):  # ValueError: a bad header
         status = None
     finally:
+        if live is not None and sock is not None:
+            live.discard(sock)
         connection.close()
     return Outcome(target.key, status, (time.monotonic() - begin) * 1000.0)
 
@@ -324,12 +386,13 @@ async def run_load(plan: Plan, seed: int) -> dict[str, Any]:
     slots = asyncio.Semaphore(plan.concurrency)
     stop = asyncio.Event()
     outcomes: list[Outcome] = []
+    live = _Live()
     streak = 0
 
     async def one(target: Target) -> None:
         nonlocal streak
         try:
-            outcome = await asyncio.to_thread(_send, target, plan, context)
+            outcome = await asyncio.to_thread(_send, target, plan, context, live)
         finally:
             slots.release()
         outcomes.append(outcome)
@@ -338,21 +401,26 @@ async def run_load(plan: Plan, seed: int) -> dict[str, Any]:
             stop.set()
 
     began = time.monotonic()
-    tasks: list[asyncio.Task[None]] = []
+    last_start = began + plan.duration_seconds + DURATION_GRACE_S
+    tasks: dict[asyncio.Task[None], Target] = {}
     for index, pick in enumerate(picks):
         wait = began + index / plan.rate_per_second - time.monotonic()
         if wait > 0:
             await asyncio.sleep(wait)
         # The plan holds rate * duration requests, paced one every 1/rate seconds. The clock only
         # stops a run that has fallen far behind (a slow instance keeps every slot busy).
-        if stop.is_set() or time.monotonic() - began >= plan.duration_seconds + DURATION_GRACE_S:
+        if stop.is_set() or time.monotonic() >= last_start:
             break
-        await slots.acquire()
+        try:  # every slot may be held by a stuck request: wait no later than the last start
+            await asyncio.wait_for(slots.acquire(), max(0.0, last_start - time.monotonic()))
+        except TimeoutError:
+            break
         if stop.is_set():
             slots.release()
             break
-        tasks.append(asyncio.create_task(one(plan.targets[pick])))
-    await asyncio.gather(*tasks)
+        target = plan.targets[pick]
+        tasks[asyncio.create_task(one(target))] = target
+    cancelled = await _drain(tasks, live, outcomes)
     elapsed = time.monotonic() - began
     by_key: dict[str, list[Outcome]] = {t.key: [] for t in plan.targets}
     for outcome in outcomes:
@@ -371,6 +439,7 @@ async def run_load(plan: Plan, seed: int) -> dict[str, Any]:
         "session": "cookie from --state" if plan.cookie else "none",
         "requests": {key: _row(rows) for key, rows in by_key.items()},
         "total": _row(outcomes),
+        "cancelled": cancelled,
         "elapsed_s": round(elapsed, 2),
         "stopped_early": stop.is_set(),
         "stop_reason": (
@@ -379,6 +448,26 @@ async def run_load(plan: Plan, seed: int) -> dict[str, Any]:
             else None
         ),
     }
+
+
+async def _drain(
+    tasks: dict[asyncio.Task[None], Target], live: _Live, outcomes: list[Outcome]
+) -> int:
+    """Waits up to `DRAIN_TIMEOUT_S` for the requests in flight, then cuts off the rest, records
+    each as a connection failure, and returns how many it cut off."""
+    if not tasks:
+        return 0
+    began = time.monotonic()
+    _, pending = await asyncio.wait(tasks, timeout=DRAIN_TIMEOUT_S)
+    if not pending:
+        return 0
+    live.abort()
+    for task in pending:
+        task.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
+    ms = (time.monotonic() - began) * 1000.0
+    outcomes.extend(Outcome(tasks[task].key, None, ms) for task in pending)
+    return len(pending)
 
 
 def plan_summary(plan: Plan, caps: Caps) -> dict[str, Any]:
@@ -405,8 +494,16 @@ def plan_summary(plan: Plan, caps: Caps) -> dict[str, Any]:
     }
 
 
+class _Parser(argparse.ArgumentParser):
+    """argparse, but a usage error exits with EXIT_REFUSED (64) rather than 2."""
+
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_REFUSED, f"{self.prog}: error: {message}\n")
+
+
 def main(argv: list[str] | None = None, caps: Caps = CAPS) -> int:
-    parser = argparse.ArgumentParser(prog="loadgen.py", description=__doc__.split("\n")[0])
+    parser = _Parser(prog="loadgen.py", description=__doc__.split("\n")[0])
     parser.add_argument("--config", type=Path, required=True, help="the project's qa.toml")
     parser.add_argument("--run-dir", type=Path, required=True, help="the run folder")
     parser.add_argument("--state", type=Path, default=None, help="a storageState file to sign in")
