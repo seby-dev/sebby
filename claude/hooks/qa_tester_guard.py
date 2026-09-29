@@ -11,8 +11,9 @@ It denies: a `.env` read (also through simple quote, backslash, or `[...]` and `
 obfuscation), the dev key, the run's private folder, the eval and extraction scripts, `env`,
 `printenv`, the shell builtins and interpreter calls that dump the environment (`os.environ`,
 `process.env`, `%ENV`, `getenv()`, `ps e`), `qa_env` outside `scenario-run`, `git push`,
-`git commit`, and the git verbs that edit or hide the tree under test, a loopback port that
-isn't the run's own, and a write outside the run's `testers/` folder or into the repository.
+`git commit`, `playwright-cli close-all` and `kill-all`, and the git verbs that edit or hide the
+tree under test, a loopback port that isn't the run's own, and a write outside the run's
+`testers/` folder or into the repository.
 It appends every command to `testers/<name>/commands.log`.
 
 Known limits: the Write check can't tell one tester's folder from another's, so a tester can
@@ -91,6 +92,10 @@ COMMAND_DENIALS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?:TYPESAFE_API_KEY|ANTHROPIC_API_KEY)"), "a provider key variable"),
     (re.compile(r"qa_env\.sh(?![\"']?\s+scenario-run\b)"), "qa_env.sh outside scenario-run"),
     (re.compile(r"-m\s+\S*qa_env\b"), "the qa_env package"),
+    (
+        re.compile(r"\bplaywright-cli(?:\s+" + _WORD + r"+)*?\s+(?:close-all|kill-all)" + _END),
+        "playwright-cli close-all or kill-all, which closes every tester's sessions",
+    ),
     (
         re.compile(r"\bgit(?:\s+(?:-[Cc]\s+\S+|--\S+))*\s+(?:push|commit)\b"),
         "git push or git commit",
