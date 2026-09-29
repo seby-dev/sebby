@@ -217,9 +217,10 @@ def test_a_security_run_starts_with_caddy_and_says_what_a_missing_binary_does() 
         "report the header and CSP checks as skipped",
         "`ca_file` and `browser_config` (with Caddy only)",
         "`skipped_checks`",
-        "so don't dispatch a `qa-tester` on it",
+        "every tester can run on it",
     ):
         assert needle in text, needle
+    assert "don't dispatch a `qa-tester` on it" not in text
 
 
 def test_a_planted_backend_defect_uses_backend_root_and_the_guard_protects_it() -> None:
